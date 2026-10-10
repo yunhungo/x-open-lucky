@@ -1,0 +1,67 @@
+/**
+ * @created 2026-10-11
+ * @description 设置运行日志的时间、级别和消息排版。
+ * @author yunhungo
+ */
+.logs-list li {
+  display: grid;
+  grid-template-columns: 150px 44px 90px 1fr;
+  gap: 16px;
+  align-items: start;
+  padding: 17px 22px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  &:last-child {
+    border: 0;
+  }
+  time {
+    color: var(--muted-foreground);
+    font-size: 10px;
+    line-height: 20px;
+  }
+  p {
+    overflow-wrap: anywhere;
+    line-height: 20px;
+  }
+}
+.logs-level {
+  font-size: 10px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  text-align: center;
+  &--info {
+    background: var(--muted);
+    color: var(--muted-foreground);
+  }
+  &--error {
+    background: color-mix(in srgb, var(--destructive) 8%, transparent);
+    color: var(--destructive);
+  }
+  &--warn {
+    color: #b7822c;
+    background: #b7822c15;
+  }
+}
+.logs-module {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  line-height: 20px;
+}
+@media (max-width: 1050px) {
+  .logs-list li {
+    grid-template-columns: 145px 42px 1fr;
+  }
+  .logs-module {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .logs-list li {
+    grid-template-columns: 1fr 42px;
+    gap: 5px 10px;
+    padding: 15px 18px;
+    p {
+      grid-column: 1 / -1;
+    }
+  }
+}

@@ -1,0 +1,43 @@
+# @created 2026-10-11
+# @description 在提交时运行完整验证并构建 QNAP amd64 镜像。
+# @author yunhungo
+name: Verify OpenLucky
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Rust toolchain
+        run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy && rustup default 1.89.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Install browser
+        run: cd frontend && npm ci && npx playwright install --with-deps chromium
+      - name: Verify
+        run: ./.myself/check.sh
+      - name: Production image
+        run: docker build --build-arg BUILD_SHA=${{ github.sha }} --tag openlucky:ci .
+      - name: Check bundled ACME
+        run: docker run --rm --entrypoint lego openlucky:ci --version
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-verification
+          path: .myself/qa/

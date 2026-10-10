@@ -1,0 +1,10 @@
+# @created 2026-10-11
+# @description 定义 Rust 服务工作区。
+# @author yunhungo
+[workspace]
+members = ["backend"]
+resolver = "2"
+
+[profile.release]
+lto = "thin"
+strip = true

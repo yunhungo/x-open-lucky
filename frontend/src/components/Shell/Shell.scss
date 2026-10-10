@@ -1,0 +1,134 @@
+/**
+ * @created 2026-10-11
+ * @description 定义管理台的侧栏、顶部工具栏和响应式工作区。
+ * @author yunhungo
+ */
+.shell {
+  min-height: 100svh;
+  &__sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 216px;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 28px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    z-index: 20;
+    > :first-child {
+      padding-left: 7px;
+    }
+  }
+  &__account {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  &__body {
+    margin-left: 216px;
+  }
+  &__header {
+    height: 76px;
+    padding: 0 36px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--card);
+  }
+  &__main {
+    max-width: 1400px;
+    margin: auto;
+    padding: 34px 36px 48px;
+  }
+  &__online {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    span {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--primary);
+    }
+  }
+}
+.navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 38px;
+  &__link {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    padding: 12px 15px;
+    border-radius: 9px;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    transition:
+      background 140ms,
+      color 140ms;
+    &:hover {
+      color: var(--foreground);
+      background: var(--muted);
+    }
+    &.is-active {
+      color: var(--primary);
+      background: color-mix(in srgb, var(--primary) 8%, transparent);
+      font-weight: 550;
+    }
+  }
+}
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 550;
+}
+@media (max-width: 1100px) {
+  .shell__sidebar {
+    width: 192px;
+    padding-inline: 12px;
+  }
+  .shell__body {
+    margin-left: 192px;
+  }
+  .shell__main {
+    padding: 28px 24px;
+  }
+  .shell__header {
+    padding-inline: 24px;
+  }
+}
+@media (max-width: 767px) {
+  .shell__sidebar {
+    display: none;
+  }
+  .shell__body {
+    margin-left: 0;
+  }
+  .shell__main {
+    padding: 24px 18px;
+  }
+  .shell__header {
+    height: 64px;
+    padding-inline: 12px;
+  }
+  .shell__online {
+    display: none;
+  }
+}

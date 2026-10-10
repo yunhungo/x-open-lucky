@@ -1,0 +1,97 @@
+/**
+ * @created 2026-10-11
+ * @description 定义与新 homepage 一致的主题与共享基础样式。
+ * @author yunhungo
+ */
+:root {
+  --background: #f6f7f9;
+  --foreground: #252d3a;
+  --card: #fff;
+  --card-foreground: #252d3a;
+  --popover: #fff;
+  --popover-foreground: #252d3a;
+  --primary: #4b6d5a;
+  --primary-foreground: #fff;
+  --secondary: #eff1f5;
+  --secondary-foreground: #252d3a;
+  --muted: #eff1f5;
+  --muted-foreground: #7b8391;
+  --accent: #eff1f5;
+  --accent-foreground: #252d3a;
+  --destructive: #c64b4b;
+  --border: #e6e9ee;
+  --input: #dee2e8;
+  --ring: #82a78d;
+  --radius: 0.55rem;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+:root.dark {
+  color-scheme: dark;
+  --background: #14181f;
+  --foreground: #e3e7ee;
+  --card: #1c222c;
+  --card-foreground: #e3e7ee;
+  --popover: #1c222c;
+  --popover-foreground: #e3e7ee;
+  --primary: #95bea5;
+  --primary-foreground: #17251c;
+  --secondary: #252c38;
+  --secondary-foreground: #e3e7ee;
+  --muted: #252c38;
+  --muted-foreground: #9aa4b5;
+  --accent: #252c38;
+  --accent-foreground: #e3e7ee;
+  --destructive: #ee8c8c;
+  --border: #2b3340;
+  --input: #374251;
+  --ring: #728d7e;
+}
+* {
+  border-color: var(--border);
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--background);
+  color: var(--foreground);
+}
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+::selection {
+  background: #b4c8bc66;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

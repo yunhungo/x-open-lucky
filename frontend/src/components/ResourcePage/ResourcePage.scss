@@ -1,0 +1,112 @@
+/**
+ * @created 2026-10-11
+ * @description 设置资源搜索、表格和空状态的布局。
+ * @author yunhungo
+ */
+.resource-toolbar {
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.resource-search {
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  color: var(--muted-foreground);
+  width: min(340px, 65%);
+  input {
+    width: 100%;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--foreground);
+    outline: none;
+  }
+  &:focus-within {
+    border-color: var(--ring);
+  }
+}
+.filter-select {
+  font-size: 12px;
+  background: transparent;
+  color: var(--muted-foreground);
+  outline-offset: 4px;
+  max-width: 120px;
+}
+.form-select {
+  appearance: auto;
+  display: block;
+  width: 100%;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-height: 36px;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--foreground);
+}
+.resource-table {
+  width: 100%;
+  text-align: left;
+  min-width: 700px;
+  th {
+    padding: 14px 22px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted-foreground);
+    background: color-mix(in srgb, var(--muted) 50%, transparent);
+  }
+  td {
+    border-top: 1px solid var(--border);
+    padding: 21px 22px;
+    vertical-align: middle;
+  }
+  th:first-child {
+    width: 27%;
+  }
+  th:nth-child(2) {
+    width: 25%;
+  }
+  th:last-child {
+    text-align: right;
+    width: 160px;
+  }
+  tr:hover td {
+    background: color-mix(in srgb, var(--muted) 20%, transparent);
+  }
+}
+.record-type {
+  display: inline-flex;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.resource-empty {
+  min-height: 310px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+@media (max-width: 520px) {
+  .resource-toolbar {
+    gap: 10px;
+  }
+  .resource-search {
+    width: 65%;
+  }
+  .resource-table td,
+  .resource-table th {
+    padding: 16px;
+  }
+}

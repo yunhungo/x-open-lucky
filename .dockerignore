@@ -1,0 +1,12 @@
+.git
+.codegraph
+.myself
+target
+data
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+*.sqlite*
+.env*
+**/__pycache__

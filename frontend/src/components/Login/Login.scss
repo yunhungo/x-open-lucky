@@ -1,0 +1,36 @@
+/**
+ * @created 2026-10-11
+ * @description 设置登录页的克制布局与响应式间距。
+ * @author yunhungo
+ */
+.login {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--background);
+  &__theme {
+    position: fixed;
+    top: 26px;
+    right: 28px;
+    padding: 10px;
+    color: var(--muted-foreground);
+    border-radius: 10px;
+    &:hover {
+      background: var(--muted);
+    }
+  }
+  &__card {
+    width: min(100%, 380px);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--card);
+    padding: 34px;
+    box-shadow: 0 8px 40px #25304105;
+    h1 {
+      font-size: 22px;
+      font-weight: 550;
+      margin: 32px 0 24px;
+    }
+  }
+}

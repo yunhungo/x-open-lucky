@@ -1,0 +1,31 @@
+/**
+ * @created 2026-10-11
+ * @description 设置账户与凭据分类和安全表单布局。
+ * @author yunhungo
+ */
+.settings-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 28px;
+  a {
+    padding: 0 2px 15px;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    &[aria-current='page'] {
+      color: var(--foreground);
+      border-bottom: 2px solid var(--primary);
+    }
+  }
+}
+.settings-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.85fr);
+  gap: 24px;
+  max-width: 950px;
+}
+@media (max-width: 900px) {
+  .settings-columns {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,260 @@
+// @created 2026-10-11
+// @description 运行流式反向代理、WebSocket 隧道与动态 SNI 证书解析。
+// @author yunhungo
+use crate::{
+    models::{Certificate, WebRule},
+    AppState,
+};
+use anyhow::Result;
+use axum::{
+    body::Body,
+    extract::{ConnectInfo, Request, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    Extension,
+};
+use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::{
+    client::legacy::{connect::HttpConnector, Client},
+    rt::{TokioExecutor, TokioIo},
+};
+use rustls::{
+    server::{ClientHello, ResolvesServerCert},
+    sign::CertifiedKey,
+};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
+
+pub type ProxyClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>;
+#[derive(Debug, Default)]
+pub struct Resolver(pub RwLock<HashMap<String, Arc<CertifiedKey>>>);
+impl ResolvesServerCert for Resolver {
+    fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        self.0
+            .read()
+            .ok()?
+            .get(&hello.server_name()?.to_lowercase())
+            .cloned()
+    }
+}
+pub fn client() -> ProxyClient {
+    let mut http = HttpConnector::new();
+    http.enforce_http(false);
+    http.set_connect_timeout(Some(Duration::from_secs(10)));
+    let connector = HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .enable_http2()
+        .wrap_connector(http);
+    Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(Duration::from_secs(60))
+        .build(connector)
+}
+pub async fn refresh(state: &AppState) -> Result<()> {
+    let values = state.store.list("web").await?;
+    let mut rules = Vec::new();
+    let mut certificates = HashMap::new();
+    for value in values {
+        let rule: WebRule = serde_json::from_value(value)?;
+        if !rule.enabled {
+            continue;
+        }
+        if !rule.certificate_id.is_empty() {
+            if let Ok(cert) = state
+                .store
+                .get::<Certificate>("certificates", &rule.certificate_id)
+                .await
+            {
+                if let Ok(key) = crate::certificates::load(&state.config.data_dir, &cert).await {
+                    certificates.insert(rule.domain.clone(), key);
+                }
+            }
+        }
+        rules.push(rule);
+    }
+    *state.rules.write().await = rules;
+    *state
+        .resolver
+        .0
+        .write()
+        .map_err(|_| anyhow::anyhow!("Certificate lock failed"))? = certificates;
+    Ok(())
+}
+fn strip_hop(headers: &mut HeaderMap, websocket: bool) {
+    let tokens = headers
+        .get(header::CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split(',')
+                .map(|s| s.trim().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for token in tokens {
+        if !websocket || !token.eq_ignore_ascii_case("upgrade") {
+            headers.remove(token.as_str());
+        }
+    }
+    for name in [
+        "proxy-connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+    ] {
+        headers.remove(name);
+    }
+    if !websocket {
+        headers.remove(header::CONNECTION);
+        headers.remove(header::UPGRADE);
+    }
+}
+pub async fn forward(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Extension(tls): Extension<bool>,
+    mut request: Request,
+) -> Response {
+    if request
+        .headers()
+        .get("x-openlucky-via")
+        .and_then(|h| h.to_str().ok())
+        == Some(state.proxy_id.as_str())
+    {
+        return (StatusCode::LOOP_DETECTED, "代理循环已阻止").into_response();
+    }
+    let authority = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<axum::http::uri::Authority>().ok());
+    let Some(authority) = authority else {
+        return (StatusCode::BAD_REQUEST, "无效 Host").into_response();
+    };
+    let domain = authority.host().to_lowercase();
+    let rule = state
+        .rules
+        .read()
+        .await
+        .iter()
+        .find(|r| r.domain == domain)
+        .cloned();
+    let Some(rule) = rule else {
+        return (StatusCode::NOT_FOUND, "未配置此域名").into_response();
+    };
+    let path = request
+        .uri()
+        .path_and_query()
+        .map(|p| p.as_str())
+        .unwrap_or("/")
+        .to_owned();
+    if !tls && rule.https_redirect {
+        let ready = state
+            .resolver
+            .0
+            .read()
+            .is_ok_and(|r| r.contains_key(&domain));
+        if !ready {
+            return (StatusCode::SERVICE_UNAVAILABLE, "证书尚未就绪").into_response();
+        }
+        let port = state.config.public_https_port;
+        let host = if port == 443 {
+            domain.clone()
+        } else {
+            format!("{domain}:{port}")
+        };
+        return (
+            StatusCode::PERMANENT_REDIRECT,
+            [(header::LOCATION, format!("https://{host}{path}"))],
+        )
+            .into_response();
+    }
+    let target = match url::Url::parse(&rule.target) {
+        Ok(t) => t,
+        Err(_) => return (StatusCode::BAD_GATEWAY, "代理配置无效").into_response(),
+    };
+    let upstream = format!("{}{}", rule.target.trim_end_matches('/'), path);
+    let uri = match upstream.parse::<axum::http::Uri>() {
+        Ok(uri) => uri,
+        Err(_) => return (StatusCode::BAD_GATEWAY, "代理地址无效").into_response(),
+    };
+    let upgrade = request
+        .headers()
+        .get(header::UPGRADE)
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
+    let client_upgrade = if upgrade {
+        Some(hyper::upgrade::on(&mut request))
+    } else {
+        None
+    };
+    strip_hop(request.headers_mut(), upgrade);
+    if let Ok(value) = HeaderValue::from_str(&state.proxy_id) {
+        request.headers_mut().insert("x-openlucky-via", value);
+    }
+    for name in [
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-real-ip",
+    ] {
+        request.headers_mut().remove(name);
+    }
+    if let Ok(value) = HeaderValue::from_str(&peer.ip().to_string()) {
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", value.clone());
+        request.headers_mut().insert("x-real-ip", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(authority.as_str()) {
+        request.headers_mut().insert("x-forwarded-host", value);
+    }
+    request.headers_mut().insert(
+        "x-forwarded-proto",
+        HeaderValue::from_static(if tls { "https" } else { "http" }),
+    );
+    if !rule.preserve_host {
+        let host = &target[url::Position::BeforeHost..url::Position::AfterPort];
+        let Ok(value) = HeaderValue::from_str(host) else {
+            return (StatusCode::BAD_GATEWAY, "目标 Host 无效").into_response();
+        };
+        request.headers_mut().insert(header::HOST, value);
+    }
+    *request.uri_mut() = uri;
+    let result =
+        tokio::time::timeout(Duration::from_secs(60), state.proxy_client.request(request)).await;
+    let mut response = match result {
+        Ok(Ok(response)) => response,
+        _ => {
+            state
+                .store
+                .event("error", "web", &format!("{} 上游连接失败", rule.domain))
+                .await;
+            return (StatusCode::BAD_GATEWAY, "上游连接失败").into_response();
+        }
+    };
+    if response.status() == StatusCode::SWITCHING_PROTOCOLS {
+        if let Some(downstream) = client_upgrade {
+            let upstream = hyper::upgrade::on(&mut response);
+            tokio::spawn(async move {
+                if let Ok((down, up)) = tokio::try_join!(downstream, upstream) {
+                    let _ = tokio::io::copy_bidirectional(
+                        &mut TokioIo::new(down),
+                        &mut TokioIo::new(up),
+                    )
+                    .await;
+                }
+            });
+        }
+    }
+    let upgraded = upgrade && response.status() == StatusCode::SWITCHING_PROTOCOLS;
+    strip_hop(response.headers_mut(), upgraded);
+    response.map(Body::new)
+}
