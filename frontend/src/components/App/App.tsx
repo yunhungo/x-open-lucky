@@ -24,11 +24,12 @@ export function App() {
     retry: false,
     refetchInterval: 60000,
   });
+  const expired = me.error instanceof ApiError && me.error.status === 401;
   const content = me.isPending ? (
     <div className='max-w-md mx-auto p-10'>
       <QueryState />
     </div>
-  ) : !me.data ? (
+  ) : !me.data || expired ? (
     me.error instanceof ApiError && me.error.status === 401 ? (
       <Login dark={dark} toggle={toggle} />
     ) : (

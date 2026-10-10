@@ -19,10 +19,20 @@ export async function request<T>(
   schema: z.ZodType<T>,
   options?: RequestInit,
 ): Promise<T> {
+  const deadline = AbortSignal.timeout(30_000);
+  const signal = options?.signal
+    ? AbortSignal.any([options.signal, deadline])
+    : deadline;
+  const interrupted = () =>
+    new ApiError(
+      deadline.aborted ? '请求超时，请刷新确认操作结果' : '请求已取消',
+      deadline.aborted ? 408 : 499,
+    );
   let response: Response;
   try {
     response = await fetch(`/api/v1${path}`, {
       ...options,
+      signal,
       credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
@@ -31,12 +41,14 @@ export async function request<T>(
       },
     });
   } catch {
+    if (signal.aborted) throw interrupted();
     throw new ApiError('无法连接服务，请检查网络后重试', 0);
   }
   let data: unknown;
   try {
     data = await response.json();
   } catch {
+    if (signal.aborted) throw interrupted();
     throw new ApiError('服务返回异常响应', response.status);
   }
   if (!response.ok) {
@@ -55,17 +67,19 @@ export const idSchema = z.object({ id: z.string() });
 export function useResources(kind: Kind) {
   return useQuery({
     queryKey: ['resources', kind],
-    queryFn: () => request(`/resources/${kind}`, z.array(schemas[kind])),
+    queryFn: ({ signal }) =>
+      request(`/resources/${kind}`, z.array(schemas[kind]), { signal }),
     refetchInterval: 5000,
   });
 }
 export function useLogs(level = '', module = '') {
   return useQuery({
     queryKey: ['logs', level, module],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       request(
         `/logs?level=${encodeURIComponent(level)}&module=${encodeURIComponent(module)}`,
         z.array(logSchema),
+        { signal },
       ),
     refetchInterval: 5000,
   });
@@ -73,7 +87,7 @@ export function useLogs(level = '', module = '') {
 export function useOverview() {
   return useQuery({
     queryKey: ['overview'],
-    queryFn: () => request('/overview', overviewSchema),
+    queryFn: ({ signal }) => request('/overview', overviewSchema, { signal }),
     refetchInterval: 10000,
   });
 }

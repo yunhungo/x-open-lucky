@@ -63,6 +63,7 @@ pub struct AppState {
     shutdown: CancellationToken,
     proxy_id: String,
     mutations: Arc<Mutex<()>>,
+    auth_mutations: Arc<Mutex<()>>,
     attempts: Arc<Mutex<HashMap<IpAddr, (Instant, u32)>>>,
     setup_hash: Arc<RwLock<String>>,
     dummy_hash: String,
@@ -179,6 +180,7 @@ async fn main() -> Result<()> {
         shutdown: CancellationToken::new(),
         proxy_id: auth::random_token(),
         mutations: Arc::default(),
+        auth_mutations: Arc::default(),
         attempts: Arc::default(),
         setup_hash: Arc::new(RwLock::new(if setup.is_empty() {
             String::new()

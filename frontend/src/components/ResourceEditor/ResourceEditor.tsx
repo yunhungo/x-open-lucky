@@ -51,7 +51,16 @@ export function ResourceEditor({
     },
   });
   return (
-    <SheetContent className='sm:max-w-[480px] w-full gap-0'>
+    <SheetContent
+      className='sm:max-w-[480px] w-full gap-0'
+      showCloseButton={!mutation.isPending}
+      onEscapeKeyDown={(e) => {
+        if (mutation.isPending) e.preventDefault();
+      }}
+      onInteractOutside={(e) => {
+        if (mutation.isPending) e.preventDefault();
+      }}
+    >
       <SheetHeader className='border-b px-6 py-6'>
         <SheetTitle>
           {item ? '编辑' : '添加'}

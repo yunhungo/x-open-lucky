@@ -147,6 +147,7 @@ pub async fn setup(
 ) -> Result<Response, ApiError> {
     check_mutation(&headers)?;
     valid_password(&body.password)?;
+    let _auth_lock = state.auth_mutations.lock().await;
     if body.username.len() < 3
         || body.username.len() > 50
         || !body
@@ -205,6 +206,7 @@ pub async fn login(
     if body.password.chars().count() > 256 || body.username.len() > 50 {
         return Err(ApiError::unauthorized());
     }
+    let _auth_lock = state.auth_mutations.lock().await;
     let admin = sqlx::query("SELECT username,password FROM admin WHERE id=1")
         .fetch_optional(&state.store.pool)
         .await?;
@@ -263,6 +265,7 @@ pub async fn change_password(
     crate::error::ApiJson(body): crate::error::ApiJson<PasswordChange>,
 ) -> Result<Response, ApiError> {
     valid_password(&body.new_password)?;
+    let _auth_lock = state.auth_mutations.lock().await;
     let hashed: String = sqlx::query_scalar("SELECT password FROM admin WHERE id=1")
         .fetch_one(&state.store.pool)
         .await?;

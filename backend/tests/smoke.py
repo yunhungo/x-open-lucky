@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -229,6 +230,32 @@ def main():
             call('POST', '/auth/login', {'username': 'admin', 'password': password}, expected=401)
             call('POST', '/auth/login', {'username': 'admin', 'password': new_password})
             check('password change revokes old sessions')
+            concurrent_password = secrets.token_urlsafe(24)
+            cookie_before_race = cookie
+
+            def concurrent_request(is_change):
+                connection = http.client.HTTPConnection('127.0.0.1', admin, timeout=20)
+                path = '/auth/password' if is_change else '/auth/login'
+                payload = {'current_password': new_password, 'new_password': concurrent_password} if is_change else {'username': 'admin', 'password': new_password}
+                connection.request('PUT' if is_change else 'POST', '/api/v1' + path, json.dumps(payload), {'Content-Type': 'application/json', 'X-OpenLucky': '1', 'Cookie': cookie_before_race})
+                response = connection.getresponse(); response.read()
+                session_cookie = response.getheader('Set-Cookie')
+                status = response.status; connection.close()
+                return is_change, status, session_cookie.split(';')[0] if session_cookie else None
+
+            with ThreadPoolExecutor(max_workers=7) as executor:
+                outcomes = list(executor.map(concurrent_request, [False] * 3 + [True] + [False] * 3))
+            for is_change, status, session_cookie in outcomes:
+                if is_change:
+                    assert status == 200 and session_cookie
+                    cookie = session_cookie
+                else:
+                    assert status in (200, 401, 429)
+                    if status == 200:
+                        call('GET', '/auth/me', expected=401, extra={'Cookie': session_cookie})
+            call('GET', '/auth/me')
+            new_password = concurrent_password
+            check('concurrent old-password logins cannot survive password revocation')
             process.terminate(); process.wait(timeout=40); assert process.returncode == 0
             start()
             call('GET', '/auth/me')

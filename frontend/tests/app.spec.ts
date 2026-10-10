@@ -49,3 +49,35 @@ test('mobile navigation and responsive layout', async ({ page }) => {
   await page.getByRole('button', { name: '打开导航' }).click(); await page.getByRole('dialog').getByRole('link', { name: 'Web 服务', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Web 服务', exact: true })).toBeVisible(); await page.getByRole('button', { name: '添加', exact: true }).click(); await expect(page.getByRole('dialog').getByLabel('目标地址')).toBeVisible(); await page.screenshot({ path: '../.myself/qa/editor-mobile.png', fullPage: true });
 });
 test('wrong login remains recoverable', async ({ page }) => { await page.goto('/'); await page.getByLabel('用户名', { exact: true }).fill('admin'); await page.getByLabel('密码', { exact: true }).fill('incorrect-password'); await page.getByRole('button', { name: '登录', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('用户名或密码错误'); await expect(page.getByLabel('用户名', { exact: true })).toHaveValue('admin'); });
+test('revoked sessions return from cached pages to login', async ({ page }) => {
+  await login(page);
+  const response = await page.request.post('/api/v1/auth/logout', { headers: { 'X-OpenLucky': '1' } });
+  expect(response.ok()).toBe(true);
+  await page.getByRole('link', { name: '动态域名', exact: true }).click();
+  await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0);
+});
+test('pending writes keep the editor open and preserve failed input', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await page.getByRole('link', { name: 'DNS 凭据', exact: true }).click();
+  await page.getByRole('button', { name: '添加', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('名称', { exact: true }).fill('保存边界测试');
+  await dialog.getByLabel('API Token', { exact: true }).fill('test-only-token');
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v1/resources/credentials', async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    await gate;
+    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '服务暂时不可用' }) });
+  });
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  if (release) release();
+  await expect(dialog.getByRole('alert')).toContainText('服务暂时不可用');
+  await expect(dialog.getByLabel('名称', { exact: true })).toHaveValue('保存边界测试');
+  await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeEnabled();
+});

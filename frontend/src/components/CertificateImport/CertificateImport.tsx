@@ -43,7 +43,16 @@ export function CertificateImport({
     },
   });
   return (
-    <SheetContent className='sm:max-w-[520px] w-full'>
+    <SheetContent
+      className='sm:max-w-[520px] w-full'
+      showCloseButton={!upload.isPending}
+      onEscapeKeyDown={(e) => {
+        if (upload.isPending) e.preventDefault();
+      }}
+      onInteractOutside={(e) => {
+        if (upload.isPending) e.preventDefault();
+      }}
+    >
       <SheetHeader>
         <SheetTitle>上传证书 · {item.name}</SheetTitle>
         <SheetDescription className='sr-only'>
