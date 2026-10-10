@@ -40,7 +40,7 @@ git commit -m 'Update OpenLucky'
 ./.myself/build-and-deploy-qnap.sh
 ```
 
-默认通过 SSH `nas` 将 `linux/amd64` 镜像上传到 QNAP，并安装至 `/share/Container/openlucky`。管理面板绑定 NAS 私网地址 `192.168.1.85:56002`，Web 监听 `58080 / 58443`。使用 host 网络以读取宿主 IPv6 地址和连接 NAS 服务；应用以 UID 10001 运行、只读根文件系统、无 Docker socket，独立 `/data`。
+默认通过 SSH `nas` 将 `linux/amd64` 镜像上传到 QNAP，并安装至 `/share/Container/openlucky`。管理面板绑定 NAS 私网地址 `192.168.1.85:56002`，Web 监听 `58081 / 58444`。使用 host 网络以读取宿主 IPv6 地址和连接 NAS 服务；应用以 UID 10001 运行、只读根文件系统、无 Docker socket，独立 `/data`。
 
 首次成功发布后，脚本经 SSH 初始化管理员 `yunhungo`，随机生成密码并以 0600 权限保存在本机 `.myself/qnap-access.json`。该文件被 Git 忽略，不输出密码到日志；后续部署保留账户。可用 `OPENLUCKY_INITIAL_ADMIN` 更改初始用户名。
 

@@ -38,7 +38,7 @@ LABEL org.opencontainers.image.title="OpenLucky" \
 ENV OPENLUCKY_DATA=/data OPENLUCKY_FRONTEND=/app/frontend
 WORKDIR /app
 USER 10001:10001
-EXPOSE 56002 58080 58443
+EXPOSE 56002 58081 58444
 HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=3 \
     CMD curl --fail --silent http://127.0.0.1:56002/healthz || exit 1
 ENTRYPOINT ["/usr/local/bin/openlucky"]

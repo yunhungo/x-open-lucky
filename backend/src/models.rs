@@ -86,11 +86,25 @@ pub fn domain_valid(domain: &str, wildcard: bool) -> bool {
         })
 }
 
-pub fn validate(kind: &str, value: Value) -> Result<Value> {
-    if value["name"]
-        .as_str()
-        .is_none_or(|n| n.trim().is_empty() || n.len() > 100 || n.chars().any(char::is_control))
-    {
+pub fn validate(kind: &str, mut value: Value) -> Result<Value> {
+    for field in ["domain", "zone"] {
+        if let Some(text) = value[field].as_str() {
+            value[field] = Value::String(text.trim().to_ascii_lowercase());
+        }
+    }
+    if let Some(text) = value["name"].as_str() {
+        value["name"] = Value::String(text.trim().to_owned());
+    }
+    if let Some(domains) = value["domains"].as_array_mut() {
+        for domain in domains {
+            if let Some(text) = domain.as_str() {
+                *domain = Value::String(text.trim().to_ascii_lowercase());
+            }
+        }
+    }
+    if value["name"].as_str().is_none_or(|n| {
+        n.trim().is_empty() || n.chars().count() > 100 || n.chars().any(char::is_control)
+    }) {
         bail!("名称应为 1–100 个字符");
     }
     match kind {

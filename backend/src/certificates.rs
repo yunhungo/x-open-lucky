@@ -68,11 +68,17 @@ pub fn parse_bundle(
     certified.keys_match().context("证书与私钥不匹配")?;
     Ok((Arc::new(certified), metadata))
 }
-pub async fn load(root: &FsPath, cert: &Certificate) -> Result<Arc<CertifiedKey>> {
+pub async fn load(root: &FsPath, cert: &Certificate) -> Result<crate::proxy::ActiveCertificate> {
     let live = root.join("certificates").join(&cert.id).join("live");
     let pem = tokio::fs::read(live.join("cert.pem")).await?;
     let key = tokio::fs::read(live.join("key.pem")).await?;
-    Ok(parse_bundle(&pem, &key, &cert.domains)?.0)
+    let (key, metadata) = parse_bundle(&pem, &key, &cert.domains)?;
+    Ok(crate::proxy::ActiveCertificate {
+        key,
+        expires_at: metadata["expires_at"]
+            .as_i64()
+            .context("Invalid certificate expiry")?,
+    })
 }
 pub async fn activate(
     state: &AppState,

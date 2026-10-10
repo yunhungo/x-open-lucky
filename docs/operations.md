@@ -7,9 +7,9 @@
 | `OPENLUCKY_DATA` | `data` | SQLite、加密密钥、初始化密钥、证书 |
 | `OPENLUCKY_FRONTEND` | `frontend/dist` | 静态前端路径 |
 | `OPENLUCKY_ADMIN_ADDR` | 本地开发 `0.0.0.0:56002`；QNAP `192.168.1.85:56002` | 管理监听 |
-| `OPENLUCKY_HTTP_ADDR` | `0.0.0.0:58080` | HTTP 代理监听 |
-| `OPENLUCKY_HTTPS_ADDR` | `0.0.0.0:58443` | HTTPS 代理监听 |
-| `OPENLUCKY_PUBLIC_HTTPS_PORT` | `58443` | HTTP 跳转使用的外部 HTTPS 端口 |
+| `OPENLUCKY_HTTP_ADDR` | `[::]:58081` | HTTP 代理监听 |
+| `OPENLUCKY_HTTPS_ADDR` | `[::]:58444` | HTTPS 代理监听 |
+| `OPENLUCKY_PUBLIC_HTTPS_PORT` | `58444` | HTTP 跳转使用的外部 HTTPS 端口 |
 | `OPENLUCKY_SECURE_COOKIE` | `false` | HTTPS 管理入口设为 `true` |
 | `OPENLUCKY_LEGO_BIN` | `lego` | ACME 可执行文件 |
 | `RUST_LOG` | `openlucky=info,tower_http=warn` | 标准输出结构化日志级别 |

@@ -130,9 +130,9 @@ async fn main() -> Result<()> {
     let config = Config {
         data_dir: PathBuf::from(env("OPENLUCKY_DATA", "data")),
         admin_addr: env("OPENLUCKY_ADMIN_ADDR", "0.0.0.0:56002").parse()?,
-        http_addr: env("OPENLUCKY_HTTP_ADDR", "0.0.0.0:58080").parse()?,
-        https_addr: env("OPENLUCKY_HTTPS_ADDR", "0.0.0.0:58443").parse()?,
-        public_https_port: env("OPENLUCKY_PUBLIC_HTTPS_PORT", "58443").parse()?,
+        http_addr: env("OPENLUCKY_HTTP_ADDR", "[::]:58081").parse()?,
+        https_addr: env("OPENLUCKY_HTTPS_ADDR", "[::]:58444").parse()?,
+        public_https_port: env("OPENLUCKY_PUBLIC_HTTPS_PORT", "58444").parse()?,
         secure_cookie: env("OPENLUCKY_SECURE_COOKIE", "false") == "true",
         build_sha: env(
             "OPENLUCKY_BUILD_SHA",

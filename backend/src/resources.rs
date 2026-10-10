@@ -26,7 +26,30 @@ pub async fn list(
     Path(kind): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     valid_kind(&kind)?;
-    Ok(Json(json!(state.store.list(&kind).await?)))
+    Ok(Json(json!(checked_list(&state, &kind).await?)))
+}
+async fn checked_list(state: &AppState, kind: &str) -> anyhow::Result<Vec<Value>> {
+    let mut items = state.store.list(kind).await?;
+    if kind == "web" {
+        let certificates = state
+            .resolver
+            .0
+            .read()
+            .map_err(|_| anyhow::anyhow!("Certificate state unavailable"))?;
+        for item in &mut items {
+            if item["enabled"] == true
+                && item["certificate_id"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty())
+                && !certificates
+                    .get(item["domain"].as_str().unwrap_or_default())
+                    .is_some_and(crate::proxy::ActiveCertificate::valid)
+            {
+                item["status"] = json!({"state":"error","message":"绑定证书未就绪或已过期"});
+            }
+        }
+    }
+    Ok(items)
 }
 pub async fn create(
     State(state): State<AppState>,
@@ -231,7 +254,7 @@ pub async fn logs(
 pub async fn overview(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let mut counts = serde_json::Map::new();
     for kind in ["ddns", "web", "certificates"] {
-        let resources = state.store.list(kind).await?;
+        let resources = checked_list(&state, kind).await?;
         counts.insert(kind.into(),json!({"total":resources.len(),"enabled":resources.iter().filter(|r| r["enabled"]==true || (kind=="certificates" && r["status"]["state"]=="ready")).count(),"errors":resources.iter().filter(|r|r["status"]["state"]=="error").count()}));
     }
     Ok(Json(

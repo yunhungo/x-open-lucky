@@ -98,6 +98,15 @@ impl Store {
                 let mut data: Value = serde_json::from_str(r.get("data"))?;
                 data["status"] = serde_json::from_str(r.get("status"))?;
                 data["revision"] = json!(r.get::<i64, _>("revision"));
+                if kind == "certificates"
+                    && data["status"]["expires_at"]
+                        .as_i64()
+                        .is_some_and(|expiry| expiry <= chrono::Utc::now().timestamp())
+                    && data["status"]["state"] != "running"
+                {
+                    data["status"]["state"] = json!("error");
+                    data["status"]["message"] = json!("证书已过期，请续期或重新导入");
+                }
                 if kind == "credentials" {
                     data.as_object_mut()
                         .context("Expected object")?

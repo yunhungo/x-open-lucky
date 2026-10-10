@@ -20,8 +20,9 @@ async fn tc_request(
     payload: Value,
     endpoint: &str,
 ) -> Result<Value> {
-    let timestamp = chrono::Utc::now().timestamp();
-    let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let now = chrono::Utc::now();
+    let timestamp = now.timestamp();
+    let date = now.format("%Y-%m-%d").to_string();
     let body = payload.to_string();
     let content = "application/json; charset=utf-8";
     let canonical=format!("POST\n/\n\ncontent-type:{content}\nhost:dnspod.tencentcloudapi.com\n\ncontent-type;host\n{}",hex::encode(Sha256::digest(body.as_bytes())));

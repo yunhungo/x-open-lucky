@@ -31,14 +31,25 @@ use std::{
 
 pub type ProxyClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>;
 #[derive(Debug, Default)]
-pub struct Resolver(pub RwLock<HashMap<String, Arc<CertifiedKey>>>);
+pub struct Resolver(pub RwLock<HashMap<String, ActiveCertificate>>);
+#[derive(Debug, Clone)]
+pub struct ActiveCertificate {
+    pub key: Arc<CertifiedKey>,
+    pub expires_at: i64,
+}
+impl ActiveCertificate {
+    pub fn valid(&self) -> bool {
+        self.expires_at > chrono::Utc::now().timestamp()
+    }
+}
 impl ResolvesServerCert for Resolver {
     fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
         self.0
             .read()
             .ok()?
             .get(&hello.server_name()?.to_lowercase())
-            .cloned()
+            .filter(|cert| cert.valid())
+            .map(|cert| cert.key.clone())
     }
 }
 pub fn client() -> ProxyClient {
@@ -160,7 +171,7 @@ pub async fn forward(
             .resolver
             .0
             .read()
-            .is_ok_and(|r| r.contains_key(&domain));
+            .is_ok_and(|r| r.get(&domain).is_some_and(ActiveCertificate::valid));
         if !ready {
             return (StatusCode::SERVICE_UNAVAILABLE, "证书尚未就绪").into_response();
         }

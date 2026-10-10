@@ -46,6 +46,8 @@ compose() { $DOCKER compose -p openlucky -f "$COMPOSE" "$@"; }
 rollback() {
   trap - EXIT
   echo '新版本健康检查失败，执行回滚。' >&2
+  $DOCKER logs --tail 100 openlucky > "$ROOT/deploy-failure-$SHA.log" 2>&1 || true
+  chmod 600 "$ROOT/deploy-failure-$SHA.log" 2>/dev/null || true
   compose down --remove-orphans >/dev/null 2>&1 || true
   if [ -n "$OLD_IMAGE" ] && [ -n "$OLD_RELEASE" ]; then
     if [ -n "${SNAPSHOT:-}" ] && [ -f "$SNAPSHOT" ]; then

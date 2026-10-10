@@ -37,7 +37,7 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 "${SSH[@]}" "umask 077; mkdir -p '$REMOTE_ROOT/releases/$SHA'; '$DOCKER_BIN' ps --format '{{.Names}}' >/dev/null"
 echo '上传 OpenLucky 镜像…'
 docker save --platform linux/amd64 "$IMAGE" | gzip -1 | "${SSH[@]}" "gzip -dc | '$DOCKER_BIN' load"
-tar -czf "$TMP_DIR/release.tar.gz" deploy/compose.yml .myself/activate-qnap.sh
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$TMP_DIR/release.tar.gz" deploy/compose.yml .myself/activate-qnap.sh
 "${SSH[@]}" "tar -xzf - -C '$REMOTE_ROOT/releases/$SHA'" < "$TMP_DIR/release.tar.gz"
 echo '发布时 OpenLucky 会有短暂中断。'
 "${SSH[@]}" "sh '$REMOTE_ROOT/releases/$SHA/.myself/activate-qnap.sh' '$REMOTE_ROOT' '$SHA' '$IMAGE' '$DOCKER_BIN'"
