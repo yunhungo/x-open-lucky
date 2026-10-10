@@ -35,7 +35,11 @@ export function StatusBadge({ resource }: { resource: Resource }) {
         ? '有效'
         : 'provider' in resource
           ? '已保存'
-          : label}
+          : state === 'ready' && 'target' in resource
+            ? '已启用'
+            : state === 'ready' && 'record_type' in resource
+              ? '已同步'
+              : label}
     </span>
   );
 }

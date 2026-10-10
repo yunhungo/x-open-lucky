@@ -44,19 +44,7 @@
     margin: auto;
     padding: 34px 36px 48px;
   }
-  &__online {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--muted-foreground);
-    span {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: var(--primary);
-    }
-  }
+
 }
 .navigation {
   display: flex;
@@ -127,8 +115,5 @@
   .shell__header {
     height: 64px;
     padding-inline: 12px;
-  }
-  .shell__online {
-    display: none;
   }
 }

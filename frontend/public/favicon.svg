@@ -1,1 +1,2 @@
+<!-- @created 2026-10-11 | @description 绘制 OpenLucky 网站图标。 | @author yunhungo -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="12" fill="#4b6d5a"/><g fill="none" stroke="#fff" stroke-width="2.5"><path d="M20 20C5 18 11 4 20 15C29 4 35 18 20 20C35 22 29 36 20 25C11 36 5 22 20 20Z"/><path d="M20 25v8"/></g></svg>

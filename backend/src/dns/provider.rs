@@ -14,7 +14,18 @@ pub fn rr(r: &Ddns) -> String {
     if r.domain == r.zone {
         "@".into()
     } else {
-        r.domain.trim_end_matches(&format!(".{}", r.zone)).into()
+        r.domain
+            .strip_suffix(&format!(".{}", r.zone))
+            .unwrap_or(&r.domain)
+            .into()
+    }
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repeated_zone_suffix_keeps_the_full_record_label() {
+        let rule:crate::models::Ddns=serde_json::from_value(serde_json::json!({"id":"x","name":"x","enabled":false,"credential_id":"x","zone":"example.com","domain":"nas.example.com.example.com","record_type":"A","source":"static","source_value":"203.0.113.5","interval":300,"ttl":600,"proxied":false})).unwrap();
+        assert_eq!(super::rr(&rule), "nas.example.com");
     }
 }
 

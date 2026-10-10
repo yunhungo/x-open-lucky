@@ -92,7 +92,8 @@ pub struct Login {
     pub setup_token: String,
 }
 pub fn valid_password(password: &str) -> Result<(), ApiError> {
-    if password.len() < 12 || password.len() > 256 {
+    let length = password.chars().count();
+    if !(12..=256).contains(&length) {
         return Err(ApiError::bad("密码需为 12–256 个字符"));
     }
     Ok(())
@@ -201,7 +202,7 @@ pub async fn login(
         }
         entry.1 += 1;
     }
-    if body.password.len() > 256 || body.username.len() > 50 {
+    if body.password.chars().count() > 256 || body.username.len() > 50 {
         return Err(ApiError::unauthorized());
     }
     let admin = sqlx::query("SELECT username,password FROM admin WHERE id=1")

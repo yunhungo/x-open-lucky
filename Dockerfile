@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=backend /openlucky /usr/local/bin/openlucky
 COPY --from=acme /lego /usr/local/bin/lego
 COPY --from=frontend /src/frontend/dist /app/frontend
+COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
 ARG BUILD_SHA=dev
 LABEL org.opencontainers.image.title="OpenLucky" \
     org.opencontainers.image.source="https://github.com/yunhungo/x-open-lucky" \

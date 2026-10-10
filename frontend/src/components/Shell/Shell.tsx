@@ -84,10 +84,6 @@ export function Shell({
             <span className='text-xs'>{page}</span>
           </div>
           <div className='flex items-center gap-4'>
-            <span className='shell__online'>
-              <span />
-              服务在线
-            </span>
             <Button
               variant='ghost'
               size='icon'

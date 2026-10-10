@@ -220,7 +220,7 @@ def main():
             assert call('GET', '/resources/web')[0]['id'] != wid
             check('encrypted portable backup and transactional restore')
             old_cookie = cookie
-            new_password = secrets.token_urlsafe(24)
+            new_password = ('秘密😀' * 50) + secrets.token_hex(8)
             call('PUT', '/auth/password', {'current_password': password, 'new_password': new_password})
             new_cookie = cookie
             call('GET', '/auth/me', expected=401, extra={'Cookie': old_cookie})
