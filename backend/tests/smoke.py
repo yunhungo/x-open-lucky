@@ -35,6 +35,15 @@ class Upstream(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.headers.get('Upgrade') == 'tailscale-control-protocol':
+            self.send_response(101)
+            self.send_header('Upgrade', 'tailscale-control-protocol')
+            self.send_header('Connection', 'Upgrade')
+            self.end_headers()
+            self.wfile.write(self.rfile.read(4))
+            self.wfile.flush()
+            self.close_connection = True
+            return
         if self.headers.get('Upgrade', '').lower() == 'websocket':
             accept = base64.b64encode(hashlib.sha1((self.headers['Sec-WebSocket-Key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
             self.send_response(101)
@@ -70,13 +79,14 @@ class Upstream(BaseHTTPRequestHandler):
 
 
 def main():
-    admin, proxy, tls = free_port(), free_port(), free_port()
+    admin, proxy, tls, public = free_port(), free_port(), free_port(), free_port()
     upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     checks = []
     with tempfile.TemporaryDirectory(prefix='openlucky-smoke-') as directory:
         root = Path(directory)
         env = dict(os.environ, OPENLUCKY_DATA=str(root / 'data'), OPENLUCKY_ADMIN_ADDR=f'127.0.0.1:{admin}', OPENLUCKY_HTTP_ADDR=f'127.0.0.1:{proxy}', OPENLUCKY_HTTPS_ADDR=f'127.0.0.1:{tls}', OPENLUCKY_PUBLIC_HTTPS_PORT=str(tls))
+        env['OPENLUCKY_LISTENERS'] = json.dumps([{'id': 'public', 'addr': f'127.0.0.1:{public}', 'https_port': public, 'mixed': True}])
         log = (root / 'server.log').open('w')
         process = None
         cookie = ''
@@ -158,7 +168,7 @@ def main():
             with sqlite3.connect(root / 'data/openlucky.sqlite') as db:
                 raw = db.execute('SELECT data FROM resources WHERE kind="credentials"').fetchone()[0]
                 assert credential['secrets']['token'] not in raw
-                assert db.execute('SELECT COUNT(*) FROM _sqlx_migrations').fetchone()[0] == 2
+                assert db.execute('SELECT COUNT(*) FROM _sqlx_migrations').fetchone()[0] == 3
             call('PUT', f'/resources/credentials/{cid}', {**credential, 'secrets': {'token': ''}})
             call('PUT', f'/resources/credentials/{cid}', {**credential, 'revision': 0}, expected=409)
             check('CSRF checks, encrypted at-rest credentials and SQL migrations')
@@ -189,6 +199,15 @@ def main():
                 frame = sock.recv(1024)
                 assert frame[0] == 129 and frame[2:] == payload
             check('real WebSocket upgrade and bidirectional tunnel')
+            with socket.create_connection(('127.0.0.1', proxy), timeout=5) as sock:
+                sock.sendall(b'GET /ts2021 HTTP/1.1\r\nHost: echo.example.test\r\nConnection: Upgrade\r\nUpgrade: tailscale-control-protocol\r\n\r\n')
+                headers = b''
+                while b'\r\n\r\n' not in headers:
+                    headers += sock.recv(1)
+                assert b'101 Switching Protocols' in headers
+                sock.sendall(b'ping')
+                assert sock.recv(4) == b'ping'
+            check('Headscale control protocol upgrade and bidirectional tunnel')
             subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(root / 'key.pem'), '-out', str(root / 'cert.pem'), '-days', '2', '-subj', '/CN=echo.example.test', '-addext', 'subjectAltName=DNS:echo.example.test'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             cert = {'name': 'Echo TLS', 'domains': ['echo.example.test'], 'email': '', 'credential_id': '', 'staging': False, 'auto_renew': False, 'imported': True}
             cert_id = call('POST', '/resources/certificates', cert)['id']
@@ -209,8 +228,52 @@ def main():
                         if not chunk: break
                         data += chunk
                     assert b'200 OK' in data and b'"proto": "https"' in data
+            for preserve in [False, True]:
+                rule['preserve_host'] = preserve
+                call('PUT', f'/resources/web/{wid}', rule)
+                h2 = subprocess.run([
+                    'curl', '--noproxy', '*', '--http2', '--silent', '--show-error',
+                    '--fail', '--max-time', '10', '--cacert', str(root / 'cert.pem'),
+                    '--resolve', f'echo.example.test:{tls}:127.0.0.1',
+                    '--write-out', '\n%{http_version}',
+                    f'https://echo.example.test:{tls}/http2',
+                ], capture_output=True, text=True)
+                assert h2.returncode == 0, (h2.stderr, h2.stdout)
+                body, protocol = h2.stdout.rsplit('\n', 1)
+                assert protocol == '2', h2.stdout
+                forwarded = json.loads(body)
+                expected_host = f'echo.example.test:{tls}' if preserve else f'127.0.0.1:{upstream.server_port}'
+                assert forwarded['host'] == expected_host and forwarded['proto'] == 'https', forwarded
+            check('HTTP/2 authority routing and preserved/replaced upstream Host')
             call('DELETE', f'/resources/certificates/{cert_id}', expected=400)
             check('certificate validation, SNI TLS handshake and HTTPS redirect')
+            # A TLS SNI for one listener must never reveal another listener's route/certificate.
+            with socket.create_connection(('127.0.0.1', public), timeout=5) as sock:
+                try:
+                    ctx.wrap_socket(sock, server_hostname='echo.example.test')
+                    raise AssertionError('Private certificate exposed through public listener')
+                except ssl.SSLError:
+                    pass
+            call('PUT', f'/resources/web/{wid}', {**rule, 'listener': 'missing'}, expected=400)
+            call('PUT', f'/resources/web/{wid}', {**rule, 'listener': 'public'})
+            assert get_proxy('/')[0] == 404
+            connection = http.client.HTTPConnection('127.0.0.1', public, timeout=5)
+            connection.request('GET', '/mixed?q=1', headers={'Host': 'echo.example.test'})
+            response = connection.getresponse()
+            assert response.status == 308 and response.getheader('Location') == f'https://echo.example.test:{public}/mixed?q=1'
+            response.read(); connection.close()
+            mixed = subprocess.run(['curl', '--noproxy', '*', '--http2', '--fail', '--silent', '--show-error', '--max-time', '10', '--cacert', str(root / 'cert.pem'), '--resolve', f'echo.example.test:{public}:127.0.0.1', f'https://echo.example.test:{public}/mixed'], capture_output=True, text=True)
+            assert mixed.returncode == 0 and json.loads(mixed.stdout)['proto'] == 'https', mixed.stderr
+            # HTTP/2 authority cannot route to a private service through a public TLS connection.
+            private_id = call('POST', '/resources/web', {**rule, 'domain': 'private.example.test', 'certificate_id': '', 'https_redirect': False})['id']
+            blocked = subprocess.run(['curl', '--noproxy', '*', '--http2', '--silent', '--show-error', '--max-time', '10', '--cacert', str(root / 'cert.pem'), '--resolve', f'echo.example.test:{public}:127.0.0.1', '-H', 'Host: private.example.test', '-o', '/dev/null', '-w', '%{http_code}', f'https://echo.example.test:{public}/'], capture_output=True, text=True)
+            assert blocked.returncode == 0 and blocked.stdout == '404', blocked
+            call('DELETE', f'/resources/web/{private_id}')
+            call('PUT', f'/resources/web/{wid}', {**rule, 'listener': 'default'})
+            wildcard = call('POST', '/resources/ddns', {**ddns, 'domain': '*.s.example.test', 'interval': 36, 'source': 'public', 'source_value': 'https://6.ipw.cn http://myip6.ipip.net'})['id']
+            call('DELETE', f'/resources/ddns/{wildcard}')
+            check('isolated listeners, mixed HTTP/TLS, HTTP/2 host isolation and wildcard DDNS')
+
             backup_password = secrets.token_urlsafe(24)
             backup = call('POST', '/backup/export', {'password': backup_password})['backup']
             assert credential['secrets']['token'] not in backup and 'BEGIN PRIVATE KEY' not in backup

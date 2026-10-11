@@ -26,6 +26,7 @@ lego 5.x 已改变 CLI 合同，不能仅修改镜像版本号升级。升级须
 - `dns/`：每个供应商独立适配器；`provider.rs` 集中定义凭据与 ACME 环境映射。新增服务商在这里注册、增加契约测试并更新 UI 合同。
 - `jobs.rs`：去重、四个并发执行槽、持久化运行状态与定时调度。失败保持可检查状态，下次周期重试；进程重启会恢复中断任务的可调度状态。每次执行查询服务商当前记录，避免只依赖缓存造成漂移。
 - `certificates.rs`：ACME 与 PEM 导入。只把凭据放入子进程环境，不拼接 shell。发布前验证 SAN、有效期与私钥匹配，新证书写入新目录后原子切换 `live` 符号链接。
+- `listeners.rs`：按入口隔离 SNI 证书及域名路由；附加入口由 `OPENLUCKY_LISTENERS` JSON 配置，IPv6 入口只接收 IPv6。可选同端口 HTTP/TLS 使用 Tokio peek 与 axum-server/rustls，不消费探测字节；探测和握手各限时 10 秒。
 - `proxy.rs`：只转发已启用的域名。原始字节流和 WebSocket 使用 Hyper 原生实现；HTTPS 上游使用可信根校验。清除用户提供的转发头，按实际连接 IP 重建；管理服务不信任外部 `X-Forwarded-For`。
 - `backup.rs`：Argon2id 派生独立备份密钥，AES-GCM 验证完整性。先校验完整资源图和全部 PEM，再生成新资源 ID 与证书目录，最后事务替换配置；不会恢复旧管理员或旧会话。
 

@@ -39,6 +39,8 @@ pub struct Ddns {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WebRule {
+    #[serde(default = "default_listener")]
+    pub listener: String,
     #[serde(default)]
     pub id: String,
     pub name: String,
@@ -65,6 +67,10 @@ pub struct Certificate {
     pub auto_renew: bool,
     #[serde(default)]
     pub imported: bool,
+}
+
+pub fn default_listener() -> String {
+    "default".into()
 }
 
 pub fn domain_valid(domain: &str, wildcard: bool) -> bool {
@@ -117,7 +123,7 @@ pub fn validate(kind: &str, mut value: Value) -> Result<Value> {
         }
         "ddns" => {
             let item: Ddns = serde_json::from_value(value)?;
-            if !domain_valid(&item.domain, false) || !domain_valid(&item.zone, false) {
+            if !domain_valid(&item.domain, true) || !domain_valid(&item.zone, false) {
                 bail!("请输入有效域名");
             }
             if item.domain != item.zone && !item.domain.ends_with(&format!(".{}", item.zone)) {
@@ -126,14 +132,31 @@ pub fn validate(kind: &str, mut value: Value) -> Result<Value> {
             if !["A", "AAAA"].contains(&item.record_type.as_str()) {
                 bail!("记录类型只能为 A 或 AAAA");
             }
-            if !(60..=86400).contains(&item.interval) {
-                bail!("更新间隔应为 60–86400 秒");
+            if !(10..=86400).contains(&item.interval) {
+                bail!("更新间隔应为 10–86400 秒");
             }
             if item.ttl != 1 && !(60..=86400).contains(&item.ttl) {
                 bail!("TTL 应为 1（自动）或 60–86400 秒");
             }
             match item.source.as_str() {
-                "public" => (),
+                "public" => {
+                    let urls: Vec<_> = item.source_value.split_whitespace().collect();
+                    if urls.len() > 8 {
+                        bail!("最多配置 8 个 IP 查询接口");
+                    }
+                    for raw in urls {
+                        let url = url::Url::parse(raw)
+                            .map_err(|_| anyhow::anyhow!("IP 查询接口 URL 无效"))?;
+                        if !["http", "https"].contains(&url.scheme())
+                            || url.host_str().is_none()
+                            || !url.username().is_empty()
+                            || url.password().is_some()
+                            || url.fragment().is_some()
+                        {
+                            bail!("IP 查询接口仅支持无凭据的 HTTP/HTTPS URL");
+                        }
+                    }
+                }
                 "static" => {
                     let ip: std::net::IpAddr = item
                         .source_value
@@ -150,6 +173,15 @@ pub fn validate(kind: &str, mut value: Value) -> Result<Value> {
         }
         "web" => {
             let item: WebRule = serde_json::from_value(value)?;
+            if item.listener.is_empty()
+                || item.listener.len() > 64
+                || !item
+                    .listener
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+            {
+                bail!("监听入口名称无效");
+            }
             if !domain_valid(&item.domain, false) {
                 bail!("请输入有效域名");
             }

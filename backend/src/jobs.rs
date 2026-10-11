@@ -115,7 +115,7 @@ async fn execute(
     }
 }
 pub async fn scheduler(state: AppState) {
-    let mut timer = tokio::time::interval(std::time::Duration::from_secs(20));
+    let mut timer = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
         tokio::select! {_=timer.tick()=>(),_=state.shutdown.cancelled()=>break};
         let now = chrono::Utc::now().timestamp();

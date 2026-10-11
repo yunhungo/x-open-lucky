@@ -7,6 +7,7 @@ mod certificates;
 mod dns;
 mod error;
 mod jobs;
+mod listeners;
 mod models;
 mod proxy;
 mod resources;
@@ -42,6 +43,7 @@ pub struct Config {
     http_addr: SocketAddr,
     https_addr: SocketAddr,
     public_https_port: u16,
+    listeners: Vec<listeners::Listener>,
     secure_cookie: bool,
     build_sha: String,
     lego_bin: String,
@@ -134,6 +136,7 @@ async fn main() -> Result<()> {
         http_addr: env("OPENLUCKY_HTTP_ADDR", "[::]:58081").parse()?,
         https_addr: env("OPENLUCKY_HTTPS_ADDR", "[::]:58444").parse()?,
         public_https_port: env("OPENLUCKY_PUBLIC_HTTPS_PORT", "58444").parse()?,
+        listeners: listeners::parse(&env("OPENLUCKY_LISTENERS", "[]"))?,
         secure_cookie: env("OPENLUCKY_SECURE_COOKIE", "false") == "true",
         build_sha: env(
             "OPENLUCKY_BUILD_SHA",
@@ -213,24 +216,17 @@ async fn main() -> Result<()> {
     tokio::spawn(jobs::scheduler(state.clone()));
     let plain = Router::new()
         .fallback(proxy::forward)
-        .layer(Extension(false))
+        .layer(Extension(listeners::Ingress {
+            listener: "default".into(),
+            tls: false,
+            https_port: config.public_https_port,
+        }))
         .with_state(state.clone());
-    let tls = Router::new()
-        .fallback(proxy::forward)
-        .layer(Extension(true))
-        .with_state(state.clone());
-    let mut tls_config = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_cert_resolver(state.resolver.clone());
-    tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    let rustls = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
     let admin = tokio::net::TcpListener::bind(config.admin_addr).await?;
     let http = tokio::net::TcpListener::bind(config.http_addr).await?;
     state.store.event("info", "system", "服务已启动").await;
     tracing::info!(admin=%config.admin_addr,http=%config.http_addr,https=%config.https_addr,"OpenLucky ready");
     let shutdown = state.shutdown.clone();
-    let tls_handle = axum_server::Handle::new();
-    let signal_handle = tls_handle.clone();
     let signal_token = shutdown.clone();
     tokio::spawn(async move {
         #[cfg(unix)]
@@ -248,7 +244,6 @@ async fn main() -> Result<()> {
             let _ = tokio::signal::ctrl_c().await;
         }
         signal_token.cancel();
-        signal_handle.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
     });
     let admin_shutdown = shutdown.clone();
     let http_shutdown = shutdown.clone();
@@ -271,13 +266,7 @@ async fn main() -> Result<()> {
             .await
             .map_err(anyhow::Error::from)
         },
-        async {
-            axum_server::bind_rustls(config.https_addr, rustls)
-                .handle(tls_handle)
-                .serve(tls.into_make_service_with_connect_info::<SocketAddr>())
-                .await
-                .map_err(anyhow::Error::from)
-        }
+        listeners::serve(state.clone())
     )?;
     state.tasks.close();
     state.tasks.wait().await;

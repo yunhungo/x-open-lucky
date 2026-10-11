@@ -98,6 +98,12 @@ export function OverviewPage() {
               <dt>HTTPS</dt>
               <dd>{data.https_addr}</dd>
             </div>
+            {data.listeners.map((entry) => (
+              <div key={entry.id}>
+                <dt>{entry.id}</dt>
+                <dd>{entry.addr}</dd>
+              </div>
+            ))}
             <div>
               <dt className='flex items-center gap-1.5'>
                 <Clock3 size={13} />

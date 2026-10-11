@@ -16,6 +16,8 @@
 
 QNAP 自定义参数保存在 `/share/Container/openlucky/runtime.env`。该文件只允许管理员维护，更新不会覆盖；健康检查使用实际管理监听地址。
 
+私网 443 接管使用 `OPENLUCKY_HTTPS_ADDR=100.64.0.5:443`、`OPENLUCKY_PUBLIC_HTTPS_PORT=443`，HTTP 监听限制为 `127.0.0.1:58081`。宿主网络沿用 QNAP 的低端口限制，镜像为 OpenLucky 二进制设置 `cap_net_bind_service=ep`，Compose 的能力上限仅保留 `NET_BIND_SERVICE`。为了允许非 root 进程在执行该二进制时获得文件能力，不能启用 `no-new-privileges`；容器仍以 UID 10001、只读根文件系统运行，无 Docker socket。验证低端口时必须使用宿主网络和空的临时数据目录，隔离网络的端口阈值不能代表宿主配置。
+
 ## 发布与恢复
 
 `.myself/build-and-deploy-qnap.sh` 要求干净、已提交的 Git 工作区。默认执行全部检查，再构建确定提交的 amd64 镜像，经 SSH 上传并调用 `.myself/activate-qnap.sh`。ARM 开发机使用原生 Rust 加 amd64 交叉编译器，避免在 QEMU 内运行 GCC。
@@ -31,3 +33,13 @@ QNAP 自定义参数保存在 `/share/Container/openlucky/runtime.env`。该文�
 `.myself/check.sh` 覆盖 Rust 格式与 Clippy、单元测试、真实协议集成测试、前端构建及浏览器流程。测试证书由 OpenSSL 本地生成，不冒充公开 CA 签发结果。供应商适配与正式 ACME 必须用获授权的真实域名和凭据单独验收。
 
 管理 API 使用私网监听，现有 Lucky 服务、其配置、镜像和其他容器均不参与此部署。面板首次启动需要 `/data/setup-token`；初始化成功后密钥失效并删除。
+
+## 多入口迁移
+
+现有 `OPENLUCKY_HTTPS_ADDR` 和 `OPENLUCKY_HTTP_ADDR` 属于 `default` 入口。额外入口示例：
+
+```sh
+OPENLUCKY_LISTENERS='[{"id":"public","addr":"[::]:41003","https_port":41003,"mixed":true}]'
+```
+
+Web 规则的 `listener` 指定入口；升级前规则迁移为 `default`。公私入口不共享路由或 SNI 证书。`mixed` 为同一端口上的明文请求提供规则配置的 HTTPS 跳转。修改监听环境后重启容器；规则和证书更新自动热加载。DDNS 支持 `*.s.example.com`；公网 IP 的 `source_value` 可填多个空白分隔的查询 URL，依次回退，单接口超时 8 秒、响应上限 4 KiB。留空使用内置 ipify，更新周期支持 10–86400 秒。

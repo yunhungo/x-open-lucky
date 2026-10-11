@@ -19,21 +19,24 @@ pub async fn resolve_ip(state: &AppState, rule: &Ddns) -> Result<IpAddr> {
             .find(|ip| ip.is_ipv4() == (rule.record_type == "A") && usable_ip(*ip))
             .context("网卡没有可用的指定版本 IP")?,
         "public" => {
-            let (client, url) = if rule.record_type == "A" {
+            let (client, default_url) = if rule.record_type == "A" {
                 (&state.ipv4, "https://api.ipify.org")
             } else {
                 (&state.ipv6, "https://api6.ipify.org")
             };
-            let raw = client
-                .get(url)
-                .send()
-                .await
-                .context("公网 IP 查询连接失败")?
-                .error_for_status()
-                .context("公网 IP 查询失败")?
-                .text()
-                .await?;
-            raw.trim().parse().context("IP 查询返回无效地址")?
+            let urls: Vec<_> = if rule.source_value.trim().is_empty() {
+                vec![default_url]
+            } else {
+                rule.source_value.split_whitespace().collect()
+            };
+            let mut found = None;
+            for url in urls {
+                if let Ok(ip) = query_ip(client, url, rule.record_type == "A").await {
+                    found = Some(ip);
+                    break;
+                }
+            }
+            found.context("所有公网 IP 查询接口均失败或返回无效地址")?
         }
         _ => bail!("未知 IP 来源"),
     };
@@ -41,6 +44,26 @@ pub async fn resolve_ip(state: &AppState, rule: &Ddns) -> Result<IpAddr> {
         bail!("IP 地址类型无效或为本地保留地址");
     }
     Ok(ip)
+}
+async fn query_ip(client: &reqwest::Client, url: &str, ipv4: bool) -> Result<IpAddr> {
+    let mut response = client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await?
+        .error_for_status()?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if bytes.len() + chunk.len() > 4096 {
+            bail!("IP 查询响应过长");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let text = std::str::from_utf8(&bytes)?;
+    text.split(|c: char| !c.is_ascii_hexdigit() && c != ':' && c != '.')
+        .filter_map(|s| s.parse::<IpAddr>().ok())
+        .find(|ip| ip.is_ipv4() == ipv4 && usable_ip(*ip))
+        .context("查询接口未返回有效 IP")
 }
 fn usable_ip(ip: IpAddr) -> bool {
     match ip {
@@ -68,6 +91,36 @@ pub async fn update(state: &AppState, rule: &Ddns) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn query_parses_ipv6_and_rejects_wrong_family_and_large_responses() {
+        use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(path("/ip"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("当前 IP：240e:39b:802:56e0:265e:beff:fe6a:cac 中国"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(path("/huge"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(4097)))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        assert_eq!(
+            query_ip(&client, &format!("{}/ip", server.uri()), false)
+                .await
+                .unwrap()
+                .to_string(),
+            "240e:39b:802:56e0:265e:beff:fe6a:cac"
+        );
+        assert!(query_ip(&client, &format!("{}/ip", server.uri()), true)
+            .await
+            .is_err());
+        assert!(query_ip(&client, &format!("{}/huge", server.uri()), false)
+            .await
+            .is_err());
+    }
     #[test]
     fn local_reserved_addresses_are_not_published() {
         for ip in ["127.0.0.1", "0.0.0.0", "169.254.1.1", "::1", "fe80::1"] {

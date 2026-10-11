@@ -38,6 +38,7 @@ export const defaults: Record<Kind, FormValues> = {
     proxied: false,
   },
   web: {
+    listener: 'default',
     name: '',
     enabled: true,
     domain: '',
@@ -138,16 +139,15 @@ export const fields: Record<Kind, Field[]> = {
     },
     {
       key: 'source_value',
-      label: '网卡名称 / IP 地址',
+      label: '查询接口 / 网卡名称 / IP 地址',
       type: 'text',
-      required: true,
-      visible: (v) => v.source !== 'public',
+      placeholder: '公网默认自动查询；自定义接口用空格分隔',
     },
     {
       key: 'interval',
       label: '更新间隔（秒）',
       type: 'number',
-      min: 60,
+      min: 10,
       max: 86400,
     },
     {
@@ -162,6 +162,13 @@ export const fields: Record<Kind, Field[]> = {
   ],
   web: [
     name,
+    {
+      key: 'listener',
+      label: '监听入口',
+      type: 'text',
+      required: true,
+      placeholder: 'default',
+    },
     {
       key: 'domain',
       label: '域名',

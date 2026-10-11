@@ -41,6 +41,7 @@ export const ddnsSchema = z.object({
   proxied: z.boolean(),
 });
 export const webSchema = z.object({
+  listener: z.string().default('default'),
   ...base,
   enabled: z.boolean(),
   domain: z.string(),
@@ -88,6 +89,16 @@ export const overviewSchema = z.object({
   admin_addr: z.string(),
   http_addr: z.string(),
   https_addr: z.string(),
+  listeners: z
+    .array(
+      z.object({
+        id: z.string(),
+        addr: z.string(),
+        https_port: z.number(),
+        mixed: z.boolean(),
+      }),
+    )
+    .default([]),
 });
 export type Overview = z.infer<typeof overviewSchema>;
 export const names: Record<Kind, string> = {

@@ -31,7 +31,7 @@ use std::{
 
 pub type ProxyClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>;
 #[derive(Debug, Default)]
-pub struct Resolver(pub RwLock<HashMap<String, ActiveCertificate>>);
+pub struct Resolver(pub RwLock<HashMap<(String, String), ActiveCertificate>>);
 #[derive(Debug, Clone)]
 pub struct ActiveCertificate {
     pub key: Arc<CertifiedKey>,
@@ -42,12 +42,18 @@ impl ActiveCertificate {
         self.expires_at > chrono::Utc::now().timestamp()
     }
 }
-impl ResolvesServerCert for Resolver {
+#[derive(Debug)]
+pub struct ScopedResolver {
+    pub inner: Arc<Resolver>,
+    pub listener: String,
+}
+impl ResolvesServerCert for ScopedResolver {
     fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        self.0
+        self.inner
+            .0
             .read()
             .ok()?
-            .get(&hello.server_name()?.to_lowercase())
+            .get(&(self.listener.clone(), hello.server_name()?.to_lowercase()))
             .filter(|cert| cert.valid())
             .map(|cert| cert.key.clone())
     }
@@ -82,7 +88,7 @@ pub async fn refresh(state: &AppState) -> Result<()> {
                 .await
             {
                 if let Ok(key) = crate::certificates::load(&state.config.data_dir, &cert).await {
-                    certificates.insert(rule.domain.clone(), key);
+                    certificates.insert((rule.listener.clone(), rule.domain.clone()), key);
                 }
             }
         }
@@ -130,9 +136,10 @@ fn strip_hop(headers: &mut HeaderMap, websocket: bool) {
 pub async fn forward(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    Extension(tls): Extension<bool>,
+    Extension(ingress): Extension<crate::listeners::Ingress>,
     mut request: Request,
 ) -> Response {
+    let tls = ingress.tls;
     if request
         .headers()
         .get("x-openlucky-via")
@@ -141,11 +148,13 @@ pub async fn forward(
     {
         return (StatusCode::LOOP_DETECTED, "代理循环已阻止").into_response();
     }
-    let authority = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<axum::http::uri::Authority>().ok());
+    let authority = request.uri().authority().cloned().or_else(|| {
+        request
+            .headers()
+            .get(header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<axum::http::uri::Authority>().ok())
+    });
     let Some(authority) = authority else {
         return (StatusCode::BAD_REQUEST, "无效 Host").into_response();
     };
@@ -155,7 +164,7 @@ pub async fn forward(
         .read()
         .await
         .iter()
-        .find(|r| r.domain == domain)
+        .find(|r| r.domain == domain && r.listener == ingress.listener)
         .cloned();
     let Some(rule) = rule else {
         return (StatusCode::NOT_FOUND, "未配置此域名").into_response();
@@ -167,15 +176,14 @@ pub async fn forward(
         .unwrap_or("/")
         .to_owned();
     if !tls && rule.https_redirect {
-        let ready = state
-            .resolver
-            .0
-            .read()
-            .is_ok_and(|r| r.get(&domain).is_some_and(ActiveCertificate::valid));
+        let ready = state.resolver.0.read().is_ok_and(|r| {
+            r.get(&(ingress.listener.clone(), domain.clone()))
+                .is_some_and(ActiveCertificate::valid)
+        });
         if !ready {
             return (StatusCode::SERVICE_UNAVAILABLE, "证书尚未就绪").into_response();
         }
-        let port = state.config.public_https_port;
+        let port = ingress.https_port;
         let host = if port == 443 {
             domain.clone()
         } else {
@@ -196,10 +204,19 @@ pub async fn forward(
         Ok(uri) => uri,
         Err(_) => return (StatusCode::BAD_GATEWAY, "代理地址无效").into_response(),
     };
+    // Headscale uses tailscale-control-protocol; HTTP/1 upgrades are not limited to WebSocket.
     let upgrade = request
         .headers()
         .get(header::UPGRADE)
-        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
+        .is_some_and(|v| !v.is_empty())
+        && request
+            .headers()
+            .get(header::CONNECTION)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                v.split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+            });
     let client_upgrade = if upgrade {
         Some(hyper::upgrade::on(&mut request))
     } else {
@@ -231,14 +248,18 @@ pub async fn forward(
         "x-forwarded-proto",
         HeaderValue::from_static(if tls { "https" } else { "http" }),
     );
-    if !rule.preserve_host {
-        let host = &target[url::Position::BeforeHost..url::Position::AfterPort];
-        let Ok(value) = HeaderValue::from_str(host) else {
-            return (StatusCode::BAD_GATEWAY, "目标 Host 无效").into_response();
-        };
-        request.headers_mut().insert(header::HOST, value);
-    }
+    let host = if rule.preserve_host {
+        authority.as_str()
+    } else {
+        &target[url::Position::BeforeHost..url::Position::AfterPort]
+    };
+    let Ok(value) = HeaderValue::from_str(host) else {
+        return (StatusCode::BAD_GATEWAY, "目标 Host 无效").into_response();
+    };
+    request.headers_mut().insert(header::HOST, value);
     *request.uri_mut() = uri;
+    // 下游 HTTP/2 不代表上游也支持 HTTP/2；由连接器按上游协议协商。
+    *request.version_mut() = axum::http::Version::HTTP_11;
     let result =
         tokio::time::timeout(Duration::from_secs(60), state.proxy_client.request(request)).await;
     let mut response = match result {

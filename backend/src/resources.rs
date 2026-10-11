@@ -42,7 +42,10 @@ async fn checked_list(state: &AppState, kind: &str) -> anyhow::Result<Vec<Value>
                     .as_str()
                     .is_some_and(|id| !id.is_empty())
                 && !certificates
-                    .get(item["domain"].as_str().unwrap_or_default())
+                    .get(&(
+                        item["listener"].as_str().unwrap_or("default").to_owned(),
+                        item["domain"].as_str().unwrap_or_default().to_owned(),
+                    ))
                     .is_some_and(crate::proxy::ActiveCertificate::valid)
             {
                 item["status"] = json!({"state":"error","message":"绑定证书未就绪或已过期"});
@@ -142,6 +145,16 @@ async fn save(
         }
     }
     if kind == "web" {
+        let listener = value["listener"].as_str().unwrap_or("default");
+        if listener != "default"
+            && !state
+                .config
+                .listeners
+                .iter()
+                .any(|entry| entry.id == listener)
+        {
+            return Err(ApiError::bad("监听入口未配置，请先配置服务启动环境"));
+        }
         let rules = state.store.list("web").await?;
         if rules
             .iter()
@@ -258,7 +271,7 @@ pub async fn overview(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         counts.insert(kind.into(),json!({"total":resources.len(),"enabled":resources.iter().filter(|r| r["enabled"]==true || (kind=="certificates" && r["status"]["state"]=="ready")).count(),"errors":resources.iter().filter(|r|r["status"]["state"]=="error").count()}));
     }
     Ok(Json(
-        json!({"counts":counts,"uptime":state.started.elapsed().as_secs(),"build_sha":state.config.build_sha,"version":env!("CARGO_PKG_VERSION"),"admin_addr":state.config.admin_addr,"http_addr":state.config.http_addr,"https_addr":state.config.https_addr}),
+        json!({"counts":counts,"uptime":state.started.elapsed().as_secs(),"build_sha":state.config.build_sha,"version":env!("CARGO_PKG_VERSION"),"admin_addr":state.config.admin_addr,"http_addr":state.config.http_addr,"https_addr":state.config.https_addr,"listeners":state.config.listeners}),
     ))
 }
 pub async fn interfaces() -> Result<Json<Value>, ApiError> {

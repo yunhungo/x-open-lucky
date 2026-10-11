@@ -24,11 +24,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 
 FROM goacme/lego:v4.35.2 AS acme
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libcap2-bin \
     && rm -rf /var/lib/apt/lists/* && groupadd -g 10001 openlucky \
     && useradd -u 10001 -g 10001 -M -s /usr/sbin/nologin openlucky \
     && mkdir -p /data && chown 10001:10001 /data
 COPY --from=backend /openlucky /usr/local/bin/openlucky
+RUN setcap cap_net_bind_service=+ep /usr/local/bin/openlucky
 COPY --from=acme /lego /usr/local/bin/lego
 COPY --from=frontend /src/frontend/dist /app/frontend
 COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md

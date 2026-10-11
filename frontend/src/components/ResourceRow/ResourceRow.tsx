@@ -86,7 +86,7 @@ export function ResourceRow({
           <>
             <p className='font-mono text-[11px] break-all'>{item.target}</p>
             <p className='mt-2 text-[11px] text-muted-foreground'>
-              {item.certificate_id ? 'HTTP / HTTPS' : 'HTTP'}
+              {item.listener} · {item.certificate_id ? 'HTTP / HTTPS' : 'HTTP'}
             </p>
           </>
         ) : 'domains' in item ? (
