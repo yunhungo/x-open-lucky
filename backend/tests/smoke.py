@@ -60,6 +60,14 @@ class Upstream(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.close_connection = True
             return
+        if self.path.startswith('/broken-stream'):
+            self.send_response(200)
+            self.send_header('Content-Length', '100')
+            self.end_headers()
+            self.wfile.write(b'partial')
+            self.wfile.flush()
+            self.close_connection = True
+            return
         if self.path.startswith('/stream'):
             self.send_response(200)
             self.send_header('Transfer-Encoding', 'chunked')
@@ -151,6 +159,8 @@ def main():
             setup = (root / 'data/setup-token').read_text()
             assert not call('GET', '/auth/status')['initialized']
             call('GET', '/overview', expected=401)
+            for endpoint in ['/access-logs', '/traffic', '/telemetry']:
+                call('GET', endpoint, expected=401)
             call('POST', '/auth/setup', {'username': 'admin', 'password': password, 'setup_token': 'incorrect'}, expected=403)
             call('POST', '/auth/setup', {'username': 'admin', 'password': password, 'setup_token': setup})
             assert not (root / 'data/setup-token').exists()
@@ -187,6 +197,48 @@ def main():
             assert get_proxy('/', host='unknown.example.test')[0] == 404
             assert get_proxy('/stream')[1] == b'firstsecond'
             check('HTTP streaming proxy, domain routing and hop-header removal')
+            # 日志只保存路径，不保存请求中的查询参数或任意头。
+            get_proxy('/privacy?token=never-store-query', headers={'Authorization': 'Bearer never-store-auth', 'Cookie': 'secret=never-store-cookie'})
+            broken = http.client.HTTPConnection('127.0.0.1', proxy, timeout=10)
+            broken.request('GET', '/broken-stream', headers={'Host': 'echo.example.test'})
+            try:
+                broken.getresponse().read()
+            except (http.client.HTTPException, OSError):
+                pass
+            finally:
+                broken.close()
+            bad_rule = {**rule, 'name': 'Broken upstream', 'domain': 'broken.example.test', 'target': f'http://127.0.0.1:{free_port()}'}
+            bad_id = call('POST', '/resources/web', bad_rule)['id']
+            assert get_proxy('/failure', host='broken.example.test')[0] == 502
+            for _ in range(100):
+                telemetry = call('GET', '/traffic')
+                if telemetry['requests'] >= 6 and telemetry['stream_errors'] > 0:
+                    break
+                time.sleep(0.1)
+            assert telemetry['requests'] >= 6 and telemetry['server_errors'] == 1
+            assert telemetry['client_errors'] == 1 and telemetry['stream_errors'] >= 1
+            logs = call('GET', f'/access-logs?service_id={wid}')['items']
+            privacy = next(row for row in logs if row['path'] == '/privacy')
+            assert privacy['client_ip'] == '127.0.0.1' and privacy['status'] == 200 and privacy['duration_ms'] >= 0
+            assert not any(secret in json.dumps(logs) for secret in ['never-store-query', 'never-store-auth', 'never-store-cookie'])
+            assert any(row['phase'] == 'stream' and row['error'] for row in logs)
+            errors = call('GET', f'/access-logs?service_id={bad_id}&errors=true')['items']
+            assert len(errors) == 1 and errors[0]['status'] == 502 and '上游连接失败' in errors[0]['error']
+            first_page = call('GET', '/access-logs?limit=2')
+            assert first_page['next_cursor'] and len(first_page['items']) == 2
+            second_page = call('GET', f"/access-logs?limit=2&before={first_page['next_cursor']}")
+            assert not ({row['id'] for row in first_page['items']} & {row['id'] for row in second_page['items']})
+            assert len(call('GET', f"/access-logs?q={privacy['request_id']}")['items']) == 1
+            for query in ['limit=201', 'status=999', 'before=-1', 'since=100&until=1']:
+                call('GET', '/access-logs?' + query, expected=400)
+            call('GET', '/traffic?hours=999999', expected=400)
+            health = call('GET', '/telemetry')
+            assert health['policy']['max_rows'] == 20000 and health['write_failures'] == 0
+            assert 'cpu_percent' in call('GET', '/overview')['performance']
+            with sqlite3.connect(root / 'data/telemetry.sqlite') as db:
+                assert db.execute('SELECT COUNT(*) FROM _sqlx_migrations').fetchone()[0] == 1
+            call('DELETE', f'/resources/web/{bad_id}')
+            check('access privacy, failed upstream, stream errors, service statistics, pagination and limits')
             with socket.create_connection(('127.0.0.1', proxy), timeout=5) as sock:
                 key = base64.b64encode(os.urandom(16)).decode()
                 sock.sendall(f'GET /ws HTTP/1.1\r\nHost: echo.example.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n\r\n'.encode())

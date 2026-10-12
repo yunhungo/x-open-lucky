@@ -271,7 +271,7 @@ pub async fn overview(State(state): State<AppState>) -> Result<Json<Value>, ApiE
         counts.insert(kind.into(),json!({"total":resources.len(),"enabled":resources.iter().filter(|r| r["enabled"]==true || (kind=="certificates" && r["status"]["state"]=="ready")).count(),"errors":resources.iter().filter(|r|r["status"]["state"]=="error").count()}));
     }
     Ok(Json(
-        json!({"counts":counts,"uptime":state.started.elapsed().as_secs(),"build_sha":state.config.build_sha,"version":env!("CARGO_PKG_VERSION"),"admin_addr":state.config.admin_addr,"http_addr":state.config.http_addr,"https_addr":state.config.https_addr,"listeners":state.config.listeners}),
+        json!({"performance":state.telemetry.performance(),"counts":counts,"uptime":state.started.elapsed().as_secs(),"build_sha":state.config.build_sha,"version":env!("CARGO_PKG_VERSION"),"admin_addr":state.config.admin_addr,"http_addr":state.config.http_addr,"https_addr":state.config.https_addr,"listeners":state.config.listeners}),
     ))
 }
 pub async fn interfaces() -> Result<Json<Value>, ApiError> {

@@ -13,6 +13,7 @@ import { Login } from '@/components/Login/Login';
 import { Shell } from '@/components/Shell/Shell';
 import { OverviewPage } from '@/components/OverviewPage/OverviewPage';
 import { ResourcePage } from '@/components/ResourcePage/ResourcePage';
+import { ServiceDetailPage } from '@/components/ServiceDetailPage/ServiceDetailPage';
 import { LogsPage } from '@/components/LogsPage/LogsPage';
 import { SettingsPage } from '@/components/SettingsPage/SettingsPage';
 import { QueryState } from '@/components/QueryState/QueryState';
@@ -46,6 +47,7 @@ export function App() {
       >
         <Route index element={<OverviewPage />} />
         <Route path='/ddns' element={<ResourcePage key='ddns' kind='ddns' />} />
+        <Route path='/web/:id' element={<ServiceDetailPage />} />
         <Route path='/web' element={<ResourcePage key='web' kind='web' />} />
         <Route
           path='/certificates'

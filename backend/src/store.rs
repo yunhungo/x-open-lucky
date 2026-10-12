@@ -161,7 +161,7 @@ impl Store {
             .bind(chrono::Utc::now().timestamp())
             .bind(level)
             .bind(module)
-            .bind(message)
+            .bind(crate::telemetry::Telemetry::bounded(message, 2048))
             .execute(&self.pool)
             .await;
         if result.is_err() {

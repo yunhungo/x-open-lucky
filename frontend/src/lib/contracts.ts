@@ -4,6 +4,7 @@
  * @author yunhungo
  */
 import { z } from 'zod';
+import { performanceSchema } from './observability';
 export const kinds = ['ddns', 'web', 'certificates', 'credentials'] as const;
 export type Kind = (typeof kinds)[number];
 export const statusSchema = z.object({
@@ -82,6 +83,7 @@ const count = z.object({
   errors: z.number(),
 });
 export const overviewSchema = z.object({
+  performance: performanceSchema,
   counts: z.object({ ddns: count, web: count, certificates: count }),
   uptime: z.number(),
   build_sha: z.string(),

@@ -1,0 +1,104 @@
+/**
+ * @created 2026-10-13
+ * @description 设置紧凑访问指标、趋势和状态区域的响应式布局。
+ * @author yunhungo
+ */
+.traffic-panel {
+  margin-top: 16px;
+  overflow: hidden;
+  &__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    h2 {
+      font-weight: 550;
+    }
+    select {
+      background: var(--card);
+      max-width: 130px;
+    }
+  }
+  &__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    padding: 16px 18px;
+    dt {
+      color: var(--muted-foreground);
+      font-size: 11px;
+      span {
+        opacity: 0.7;
+      }
+    }
+    dd {
+      margin-top: 7px;
+      font-size: 23px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+    }
+    small {
+      color: var(--muted-foreground);
+      font-size: 11px;
+      margin-left: 8px;
+    }
+  }
+}
+.telemetry-message {
+  padding: 12px 18px;
+  font-size: 12px;
+  button {
+    text-decoration: underline;
+    margin-left: 6px;
+  }
+}
+.traffic-chart {
+  padding: 0 18px 12px;
+  svg {
+    width: 100%;
+    height: 84px;
+    border-bottom: 1px solid var(--border);
+  }
+  &__scale,
+  &__axis {
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted-foreground);
+    font-size: 10px;
+    gap: 12px;
+  }
+  &__axis {
+    padding-top: 6px;
+  }
+}
+@media (max-width: 640px) {
+  .traffic-panel__stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 18px;
+    dd {
+      font-size: 21px;
+    }
+  }
+}
+
+.traffic-chart {
+  g[role='button'] {
+    cursor: pointer;
+    outline: none;
+  }
+  g[role='button']:focus-visible > rect:first-of-type {
+    stroke: var(--ring);
+    stroke-width: 1px;
+  }
+  &__selection {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 7px;
+    font-size: 11px;
+  }
+}

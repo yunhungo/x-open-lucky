@@ -1,6 +1,6 @@
 /**
  * @created 2026-10-11
- * @description 展示实际资源统计、监听地址与近期运行事件。
+ * @description 展示资源、进程性能、访问统计和近期运行事件。
  * @author yunhungo
  */
 import { Link } from 'react-router-dom';
@@ -16,6 +16,9 @@ import {
 import { useLogs, useOverview } from '@/lib/api';
 import { dateTime, uptime } from '@/lib/contracts';
 import { QueryState } from '@/components/QueryState/QueryState';
+import { PerformancePanel } from '@/components/PerformancePanel/PerformancePanel';
+import { TrafficPanel } from '@/components/TrafficPanel/TrafficPanel';
+import { CollectionNotice } from './CollectionNotice';
 import './OverviewPage.scss';
 export function OverviewPage() {
   const summary = useOverview();
@@ -38,6 +41,14 @@ export function OverviewPage() {
   return (
     <>
       <h1 className='sr-only'>概览</h1>
+      {summary.isError && (
+        <p role='alert' className='mb-3 text-xs text-destructive'>
+          数据刷新失败{' '}
+          <button className='underline' onClick={() => void summary.refetch()}>
+            重试
+          </button>
+        </p>
+      )}
       <div className='overview-metrics'>
         {cards.map((card) => (
           <Link
@@ -74,6 +85,9 @@ export function OverviewPage() {
           </Link>
         ))}
       </div>
+      <PerformancePanel data={data.performance} />
+      <CollectionNotice />
+      <TrafficPanel />
       <div className='overview-detail'>
         <section className='panel'>
           <div className='panel-heading'>
@@ -125,7 +139,7 @@ export function OverviewPage() {
           <div className='panel-heading'>
             <span>近期活动</span>
             <Link
-              to='/logs'
+              to='/logs?tab=events'
               className='flex items-center gap-1 text-[11px] font-normal text-muted-foreground hover:text-primary'
             >
               全部

@@ -1,6 +1,7 @@
 // @created 2026-10-11
 // @description 运行流式反向代理、WebSocket 隧道与动态 SNI 证书解析。
 // @author yunhungo
+use crate::telemetry::{Access, Telemetry};
 use crate::{
     models::{Certificate, WebRule},
     AppState,
@@ -13,6 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     Extension,
 };
+use http_body_util::BodyExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{
     client::legacy::{connect::HttpConnector, Client},
@@ -137,7 +139,60 @@ pub async fn forward(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Extension(ingress): Extension<crate::listeners::Ingress>,
+    request: Request,
+) -> Response {
+    let started = std::time::Instant::now();
+    let mut entry = Access {
+        time: chrono::Utc::now().timestamp(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+        service_id: String::new(),
+        host: String::new(),
+        listener: ingress.listener.clone(),
+        client_ip: peer.ip().to_string(),
+        method: Telemetry::bounded(request.method().as_str(), 16),
+        path: Telemetry::bounded(request.uri().path(), 512),
+        status: 0,
+        duration_ms: 0.0,
+        error: String::new(),
+        phase: "request".into(),
+        tls: ingress.tls,
+    };
+    let mut response = forward_inner(&state, peer, ingress, request, &mut entry).await;
+    entry.duration_ms = started.elapsed().as_secs_f64() * 1000.0;
+    entry.status = response.status().as_u16();
+    if entry.status >= 400 && entry.error.is_empty() {
+        entry.error = match entry.status {
+            400 => "无效 Host",
+            404 => "未匹配域名",
+            503 => "证书尚未就绪",
+            508 => "代理循环已阻止",
+            _ => "代理配置无效",
+        }
+        .into();
+    }
+    // 由本代理生成关联 ID，忽略外部注入的同名响应头。
+    if let Ok(id) = HeaderValue::from_str(&entry.request_id) {
+        response.headers_mut().insert("x-openlucky-request-id", id);
+    }
+    state.telemetry.record(entry.clone());
+    let telemetry = state.telemetry.clone();
+    response.map(|body| {
+        Body::new(body.map_err(move |error| {
+            let mut failure = entry.clone();
+            failure.time = chrono::Utc::now().timestamp();
+            failure.phase = "stream".into();
+            failure.error = "响应流中断".into();
+            telemetry.record(failure);
+            error
+        }))
+    })
+}
+async fn forward_inner(
+    state: &AppState,
+    peer: SocketAddr,
+    ingress: crate::listeners::Ingress,
     mut request: Request,
+    entry: &mut Access,
 ) -> Response {
     let tls = ingress.tls;
     if request
@@ -159,6 +214,7 @@ pub async fn forward(
         return (StatusCode::BAD_REQUEST, "无效 Host").into_response();
     };
     let domain = authority.host().to_lowercase();
+    entry.host = Telemetry::bounded(&domain, 253);
     let rule = state
         .rules
         .read()
@@ -169,6 +225,7 @@ pub async fn forward(
     let Some(rule) = rule else {
         return (StatusCode::NOT_FOUND, "未配置此域名").into_response();
     };
+    entry.service_id = rule.id.clone();
     let path = request
         .uri()
         .path_and_query()
@@ -264,24 +321,39 @@ pub async fn forward(
         tokio::time::timeout(Duration::from_secs(60), state.proxy_client.request(request)).await;
     let mut response = match result {
         Ok(Ok(response)) => response,
-        _ => {
-            state
-                .store
-                .event("error", "web", &format!("{} 上游连接失败", rule.domain))
-                .await;
+        Ok(Err(_)) => {
+            entry.error = "上游连接失败（连接、TLS 或协议）".into();
             return (StatusCode::BAD_GATEWAY, "上游连接失败").into_response();
         }
+        Err(_) => {
+            entry.error = "上游响应超时".into();
+            return (StatusCode::GATEWAY_TIMEOUT, "上游响应超时").into_response();
+        }
     };
+    if response.status().is_client_error() || response.status().is_server_error() {
+        entry.error = format!("上游返回 HTTP {}", response.status().as_u16());
+    }
     if response.status() == StatusCode::SWITCHING_PROTOCOLS {
         if let Some(downstream) = client_upgrade {
             let upstream = hyper::upgrade::on(&mut response);
+            let telemetry = state.telemetry.clone();
+            let mut failure = entry.clone();
+            failure.status = 101;
             tokio::spawn(async move {
-                if let Ok((down, up)) = tokio::try_join!(downstream, upstream) {
-                    let _ = tokio::io::copy_bidirectional(
+                let failed = match tokio::try_join!(downstream, upstream) {
+                    Ok((down, up)) => tokio::io::copy_bidirectional(
                         &mut TokioIo::new(down),
                         &mut TokioIo::new(up),
                     )
-                    .await;
+                    .await
+                    .is_err(),
+                    Err(_) => true,
+                };
+                if failed {
+                    failure.time = chrono::Utc::now().timestamp();
+                    failure.phase = "tunnel".into();
+                    failure.error = "升级隧道中断".into();
+                    telemetry.record(failure);
                 }
             });
         }

@@ -12,6 +12,7 @@ mod models;
 mod proxy;
 mod resources;
 mod store;
+mod telemetry;
 use anyhow::{Context, Result};
 use axum::{
     extract::State,
@@ -51,6 +52,7 @@ pub struct Config {
 #[derive(Clone)]
 pub struct AppState {
     store: store::Store,
+    telemetry: Arc<telemetry::Telemetry>,
     config: Config,
     http: reqwest::Client,
     ipv4: reqwest::Client,
@@ -85,6 +87,9 @@ pub fn management(state: AppState) -> Router {
         .route("/auth/sessions/revoke", post(auth::revoke_sessions))
         .route("/overview", get(resources::overview))
         .route("/logs", get(resources::logs))
+        .route("/access-logs", get(telemetry::api::logs))
+        .route("/traffic", get(telemetry::api::traffic))
+        .route("/telemetry", get(telemetry::api::health))
         .route("/interfaces", get(resources::interfaces))
         .route("/backup/export", post(backup::export))
         .route("/backup/restore", post(backup::restore))
@@ -167,8 +172,11 @@ async fn main() -> Result<()> {
             .connect_timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
     };
+    let telemetry =
+        telemetry::Telemetry::open(&config.data_dir, telemetry::Policy::from_env()?).await?;
     let state = AppState {
         store,
+        telemetry,
         config: config.clone(),
         http: base().build()?,
         ipv4: base().local_address("0.0.0.0".parse::<IpAddr>()?).build()?,
@@ -213,6 +221,7 @@ async fn main() -> Result<()> {
         }
     }
     proxy::refresh(&state).await?;
+    let telemetry_task = tokio::spawn(state.telemetry.clone().run(state.shutdown.clone()));
     tokio::spawn(jobs::scheduler(state.clone()));
     let plain = Router::new()
         .fallback(proxy::forward)
@@ -270,6 +279,8 @@ async fn main() -> Result<()> {
     )?;
     state.tasks.close();
     state.tasks.wait().await;
+    let _ = telemetry_task.await;
+    state.telemetry.close().await;
     state.store.pool.close().await;
     Ok(())
 }

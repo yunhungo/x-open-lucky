@@ -65,3 +65,20 @@
     }
   }
 }
+
+.logs-tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+  button {
+    padding: 0 0 12px;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    border-bottom: 2px solid transparent;
+    &[aria-selected='true'] {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+  }
+}

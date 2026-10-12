@@ -1,0 +1,280 @@
+/**
+ * @created 2026-10-13
+ * @description 设置访问筛选、紧凑日志表格和容量信息的响应式布局。
+ * @author yunhungo
+ */
+.access-panel {
+  margin-top: 16px;
+  &__toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-bottom: 12px;
+    select {
+      background: var(--card);
+      font-size: 12px;
+      max-width: 160px;
+      padding: 7px 4px;
+    }
+  }
+  &__search {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    gap: 8px;
+    background: var(--card);
+    flex: 1 1 230px;
+    max-width: 350px;
+    input {
+      font-size: 12px;
+      width: 100%;
+      min-width: 0;
+      outline: none;
+    }
+    &:focus-within {
+      border-color: var(--ring);
+    }
+    button {
+      color: var(--muted-foreground);
+    }
+  }
+  &__errors {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+  }
+  &__empty {
+    padding: 26px 18px;
+    text-align: center;
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+  &__footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px 16px;
+    padding: 8px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+}
+.access-table {
+  width: 100%;
+  min-width: 830px;
+  font-size: 11px;
+  text-align: left;
+  &--scoped {
+    min-width: 680px;
+  }
+  &__scroll {
+    overflow-x: auto;
+  }
+  th {
+    background: color-mix(in srgb, var(--muted) 50%, transparent);
+    color: var(--muted-foreground);
+    font-weight: 400;
+    padding: 10px 14px;
+    white-space: nowrap;
+  }
+  td {
+    padding: 11px 14px;
+    border-top: 1px solid var(--border);
+    vertical-align: top;
+    font-variant-numeric: tabular-nums;
+  }
+  td:first-child,
+  td:last-child {
+    white-space: nowrap;
+  }
+  td:last-child,
+  th:last-child {
+    text-align: right;
+  }
+  small {
+    display: block;
+    color: var(--muted-foreground);
+    font-size: 10px;
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+  }
+  a {
+    color: var(--primary);
+  }
+  summary {
+    cursor: pointer;
+    overflow-wrap: anywhere;
+    min-width: 160px;
+    max-width: 390px;
+    span {
+      font-family: ui-monospace, monospace;
+    }
+    b {
+      font-size: 10px;
+      font-weight: 500;
+    }
+  }
+  dl {
+    display: grid;
+    gap: 5px 10px;
+    grid-template-columns: auto minmax(0, 1fr);
+    margin-top: 8px;
+    font-size: 10px;
+    dt {
+      color: var(--muted-foreground);
+    }
+    dd {
+      overflow-wrap: anywhere;
+    }
+  }
+  &__error {
+    margin-top: 4px;
+    color: var(--destructive);
+    overflow-wrap: anywhere;
+    max-width: 390px;
+  }
+}
+.telemetry-status {
+  padding: 8px 0;
+  summary {
+    cursor: pointer;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 7px 14px;
+    margin: 10px 0 4px;
+  }
+}
+@media (max-width: 640px) {
+  .access-panel__search {
+    max-width: none;
+    flex-basis: 100%;
+  }
+  .access-panel__toolbar {
+    gap: 8px 12px;
+  }
+  .access-panel__actions {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .access-table {
+    display: block;
+    min-width: 0;
+    thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+    tbody {
+      display: block;
+    }
+    tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-areas: 'request status duration' 'time client client' 'service service service';
+      gap: 7px 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      &:last-child {
+        border-bottom: 0;
+      }
+    }
+    td {
+      border: 0;
+      padding: 0;
+      min-width: 0;
+    }
+    &__request {
+      grid-area: request;
+      summary {
+        min-width: 0;
+        max-width: none;
+      }
+    }
+    &__status {
+      grid-area: status;
+    }
+    &__duration {
+      grid-area: duration;
+    }
+    &__time {
+      grid-area: time;
+      color: var(--muted-foreground);
+      font-size: 10px;
+    }
+    &__client {
+      grid-area: client;
+      justify-self: end;
+      text-align: right;
+      font-size: 10px;
+      overflow-wrap: anywhere;
+      max-width: 140px;
+      color: var(--muted-foreground);
+    }
+    &__service {
+      grid-area: service;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      small {
+        margin: 0;
+      }
+    }
+    &--scoped tr {
+      grid-template-areas: 'request status duration' 'time client client';
+    }
+  }
+  .telemetry-status[open] {
+    width: 100%;
+  }
+}
+
+.telemetry-status {
+  position: relative;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  dl {
+    position: absolute;
+    right: 0;
+    z-index: 10;
+    width: max-content;
+    max-width: calc(100vw - 36px);
+    padding: 14px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 24px #00000012;
+  }
+}
+
+@media (max-width: 640px) {
+  .access-panel__toolbar {
+    position: relative;
+  }
+  .telemetry-status {
+    position: static;
+    dl {
+      left: 0;
+      right: auto;
+      max-width: 100%;
+    }
+  }
+}

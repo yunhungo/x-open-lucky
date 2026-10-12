@@ -6,6 +6,7 @@
 import { Pencil, Trash2, RefreshCw, Upload, LoaderCircle } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -65,7 +66,19 @@ export function ResourceRow({
   return (
     <tr>
       <td>
-        <div className='font-medium text-[13px]'>{item.name}</div>
+        <div className='font-medium text-[13px]'>
+          {kind === 'web' ? (
+            <Link
+              className='text-primary hover:underline'
+              to={`/web/${item.id}`}
+              title='查看服务详情'
+            >
+              {item.name}
+            </Link>
+          ) : (
+            item.name
+          )}
+        </div>
         <div className='mt-1.5 text-xs text-muted-foreground break-all'>
           {'domain' in item
             ? item.domain

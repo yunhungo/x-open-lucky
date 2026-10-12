@@ -12,6 +12,8 @@
 | `OPENLUCKY_PUBLIC_HTTPS_PORT` | `58444` | HTTP 跳转使用的外部 HTTPS 端口 |
 | `OPENLUCKY_SECURE_COOKIE` | `false` | HTTPS 管理入口设为 `true` |
 | `OPENLUCKY_LEGO_BIN` | `lego` | ACME 可执行文件 |
+| `OPENLUCKY_ACCESS_DAYS` | `7` | 访问明细保留 1–30 天 |
+| `OPENLUCKY_ACCESS_ROWS` | `20000` | 访问明细上限 1,000–100,000 条，数据库仍限制 64 MiB |
 | `RUST_LOG` | `openlucky=info,tower_http=warn` | 标准输出结构化日志级别 |
 
 QNAP 自定义参数保存在 `/share/Container/openlucky/runtime.env`。该文件只允许管理员维护，更新不会覆盖；健康检查使用实际管理监听地址。
@@ -43,3 +45,5 @@ OPENLUCKY_LISTENERS='[{"id":"public","addr":"[::]:41003","https_port":41003,"mix
 ```
 
 Web 规则的 `listener` 指定入口；升级前规则迁移为 `default`。公私入口不共享路由或 SNI 证书。`mixed` 为同一端口上的明文请求提供规则配置的 HTTPS 跳转。修改监听环境后重启容器；规则和证书更新自动热加载。DDNS 支持 `*.s.example.com`；公网 IP 的 `source_value` 可填多个空白分隔的查询 URL，依次回退，单接口超时 8 秒、响应上限 4 KiB。留空使用内置 ipify，更新周期支持 10–86400 秒。
+
+访问明细与小时统计存储在 `/data/telemetry.sqlite`，与配置数据库隔离；默认批量延迟最多约 5 秒。系统事件、访问队列、明细、统计与控制台均设置上限。概览的采集异常提示及日志页的采集状态用于识别丢失。完整保留策略、统计口径和磁盘边界见 [访问与性能观测](observability.md)。
