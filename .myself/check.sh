@@ -12,6 +12,7 @@ cargo build --locked
 (cd frontend && npm ci && npm run build)
 python3 backend/tests/smoke.py
 python3 backend/tests/web_protocols.py
+python3 backend/tests/shutdown.py
 python3 backend/tests/deployment.py
 (cd frontend && npx playwright test)
 bash -n .myself/build-and-deploy-qnap.sh

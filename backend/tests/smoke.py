@@ -371,7 +371,8 @@ def main():
             call('GET', '/auth/me')
             new_password = concurrent_password
             check('concurrent old-password logins cannot survive password revocation')
-            process.terminate(); process.wait(timeout=40); assert process.returncode == 0
+            process.terminate(); process.wait(timeout=40)
+            assert process.returncode == 0, (process.returncode, (root / 'server.log').read_text())
             start()
             call('GET', '/auth/me')
             assert len(call('GET', '/resources/certificates')) == 1

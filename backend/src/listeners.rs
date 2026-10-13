@@ -188,7 +188,8 @@ pub async fn serve(state: AppState) -> anyhow::Result<()> {
     tokio::select! {
         result = servers.join_next() => {
             if let Some(result) = result { result??; }
-            anyhow::bail!("代理监听入口意外停止");
+            // QUIC also observes this token and may finish before select polls cancellation.
+            anyhow::ensure!(state.shutdown.is_cancelled(), "代理监听入口意外停止");
         }
         _ = state.shutdown.cancelled() => {}
     }
