@@ -47,6 +47,10 @@ QNAP 自定义参数保存在 `/share/Container/openlucky/runtime.env`。该文�
 
 `.myself/check.sh` 覆盖 Rust 格式与 Clippy、单元测试、真实协议集成测试、前端构建及浏览器流程。测试证书由 OpenSSL 本地生成，不冒充公开 CA 签发结果。供应商适配与正式 ACME 必须用获授权的真实域名和凭据单独验收。
 
+不带参数时执行完整检查；也可指定 `rust / frontend / smoke / groups / protocols / shutdown / deployment / browser / shell` 阶段，例如 `.myself/check.sh protocols shutdown`。集成与浏览器阶段需要先完成 Rust 和前端构建。GitHub Actions 复用同一脚本逐项显示结果，并行构建 amd64 镜像，使用独立临时容器核对构建 SHA、健康接口、前端直达链接和 ACME 客户端。CI 不部署到 NAS。
+
+CI 在 `browser-verification` 附件中保留各阶段日志、页面截图、HTML 报告及失败 trace，保留期为 7 天。最终 `verify` 检查要求测试与镜像任务均成功，保持现有分支保护检查名称。Rust 缓存按工具链、依赖和提交保存并回退复用最近构建；Docker 使用 GitHub Actions 层缓存。层缓存不保存 Dockerfile 中的 Cargo cache mount，因此源码改动后的镜像编译仍可能占主要耗时。可从 Actions 页面手动触发完整验证。
+
 管理 API 使用私网监听，现有 Lucky 服务、其配置、镜像和其他容器均不参与此部署。面板首次启动需要 `/data/setup-token`；初始化成功后密钥失效并删除。
 
 ## 多入口迁移

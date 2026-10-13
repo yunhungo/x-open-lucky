@@ -6,41 +6,102 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  verify:
-    runs-on: ubuntu-latest
+  checks:
+    name: Tests
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Rust toolchain
         run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy && rustup default 1.89.0
-      - uses: actions/cache@v4
+      - name: Rust build cache
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-      - name: Install browser
-        run: cd frontend && npm ci && npx playwright install --with-deps chromium
-      - name: Verify
-        run: ./.myself/check.sh
-      - name: Production image
-        run: docker build --build-arg BUILD_SHA=${{ github.sha }} --tag openlucky:ci .
-      - name: Check bundled ACME
-        run: docker run --rm --entrypoint lego openlucky:ci --version
-      - uses: actions/upload-artifact@v4
+          key: rust-${{ runner.os }}-${{ runner.arch }}-1.89-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            rust-${{ runner.os }}-${{ runner.arch }}-1.89-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-
+            rust-${{ runner.os }}-${{ runner.arch }}-1.89-
+      - name: Rust format, lint, unit tests and build
+        run: .myself/check.sh rust 2>&1 | tee rust-verification.log
+      - name: Frontend install and build
+        run: .myself/check.sh frontend 2>&1 | tee frontend-verification.log
+      - name: Install Chromium
+        run: cd frontend && npx playwright install --with-deps chromium
+      - name: API, security and proxy integration
+        run: .myself/check.sh smoke 2>&1 | tee smoke-verification.log
+      - name: Service groups and backup compatibility
+        run: .myself/check.sh groups 2>&1 | tee groups-verification.log
+      - name: HTTP/1.1, HTTP/2 and QUIC integration
+        run: .myself/check.sh protocols 2>&1 | tee protocols-verification.log
+      - name: Graceful shutdown regression
+        run: .myself/check.sh shutdown 2>&1 | tee shutdown-verification.log
+      - name: Deployment and rollback regression
+        run: .myself/check.sh deployment shell 2>&1 | tee deployment-verification.log
+      - name: Browser verification
+        run: .myself/check.sh browser 2>&1 | tee browser-verification.log
+      - name: Upload verification evidence
+        uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: browser-verification
-          path: .myself/qa/
+          retention-days: 7
+          include-hidden-files: true
+          path: |
+            *-verification.log
+            .myself/qa/
+            frontend/playwright-report/
+            frontend/test-results/
+  image:
+    name: Production image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - name: Build amd64 image
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: openlucky:ci
+          build-args: BUILD_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=openlucky-amd64
+          cache-to: type=gha,scope=openlucky-amd64,mode=max
+      - name: Verify image startup and contents
+        run: .myself/check-image.sh openlucky:ci "$EXPECTED_SHA"
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+  verify:
+    # 保留原 required check 名称；只有测试与镜像均成功才允许通过。
+    needs: [checks, image]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require all verification jobs
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          IMAGE_RESULT: ${{ needs.image.result }}
+        run: |
+          printf 'Tests: %s\nProduction image: %s\n' "$CHECKS_RESULT" "$IMAGE_RESULT"
+          [[ "$CHECKS_RESULT" == success && "$IMAGE_RESULT" == success ]]
