@@ -133,7 +133,7 @@ pub fn management(state: AppState) -> Router {
             )
         });
     let frontend = env("OPENLUCKY_FRONTEND", "frontend/dist");
-    Router::new().nest("/api/v1",api).route("/healthz",get(health)).fallback_service(ServeDir::new(&frontend).not_found_service(ServeFile::new(format!("{frontend}/index.html"))))
+    Router::new().nest("/api/v1",api).route("/healthz",get(health)).fallback_service(ServeDir::new(&frontend).fallback(ServeFile::new(format!("{frontend}/index.html"))))
         .layer(axum::extract::DefaultBodyLimit::max(5*1024*1024))
         .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS,HeaderValue::from_static("nosniff")))
         .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY,HeaderValue::from_static("same-origin")))

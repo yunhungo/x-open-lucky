@@ -93,7 +93,12 @@ def main():
     checks = []
     with tempfile.TemporaryDirectory(prefix='openlucky-smoke-') as directory:
         root = Path(directory)
+        frontend = root / 'frontend'
+        frontend.mkdir()
+        index = b'<!doctype html><title>OpenLucky smoke</title><div id="root"></div>'
+        (frontend / 'index.html').write_bytes(index)
         env = dict(os.environ, OPENLUCKY_DATA=str(root / 'data'), OPENLUCKY_ADMIN_ADDR=f'127.0.0.1:{admin}', OPENLUCKY_HTTP_ADDR=f'127.0.0.1:{proxy}', OPENLUCKY_HTTPS_ADDR=f'127.0.0.1:{tls}', OPENLUCKY_PUBLIC_HTTPS_PORT=str(tls))
+        env['OPENLUCKY_FRONTEND'] = str(frontend)
         env['OPENLUCKY_LISTENERS'] = json.dumps([{'id': 'public', 'addr': f'127.0.0.1:{public}', 'https_port': public, 'mixed': True}])
         log = (root / 'server.log').open('w')
         process = None
@@ -155,6 +160,15 @@ def main():
 
         try:
             start()
+            for path in ['/', '/web?group=group-network', '/web/example', '/logs?group=group-network']:
+                connection = http.client.HTTPConnection('127.0.0.1', admin, timeout=10)
+                connection.request('GET', path)
+                response = connection.getresponse()
+                assert response.status == 200, (path, response.status)
+                assert response.getheader('Content-Type').startswith('text/html')
+                assert response.read() == index
+                connection.close()
+            check('SPA direct links return the page with HTTP 200')
             password = secrets.token_urlsafe(24)
             setup = (root / 'data/setup-token').read_text()
             assert not call('GET', '/auth/status')['initialized']
@@ -165,6 +179,7 @@ def main():
             call('POST', '/auth/setup', {'username': 'admin', 'password': password, 'setup_token': setup})
             assert not (root / 'data/setup-token').exists()
             assert call('GET', '/auth/me')['username'] == 'admin'
+            call('GET', '/missing-endpoint', expected=404)
             call('POST', '/auth/setup', {'username': 'admin', 'password': password, 'setup_token': setup}, expected=403)
             call('POST', '/auth/login', {'username': 'admin', 'password': 'wrong'}, expected=401)
             call('POST', '/auth/login', {'username': 'admin', 'password': password})
