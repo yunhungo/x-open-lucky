@@ -39,6 +39,8 @@ pub struct Ddns {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WebRule {
+    #[serde(default)]
+    pub options: crate::web_options::WebOptions,
     #[serde(default = "default_listener")]
     pub listener: String,
     #[serde(default)]
@@ -196,6 +198,7 @@ pub fn validate(kind: &str, mut value: Value) -> Result<Value> {
             {
                 bail!("目标仅支持无凭据、查询或片段的 HTTP/HTTPS URL");
             }
+            item.options.validate(&item)?;
             if item.https_redirect && item.certificate_id.is_empty() {
                 bail!("HTTPS 跳转需要绑定证书");
             }

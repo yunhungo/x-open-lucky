@@ -1,0 +1,58 @@
+/**
+ * @created 2026-10-13
+ * @description 以紧凑两行布局呈现请求头名称、操作与动态值。
+ * @author yunhungo
+ */
+.header-rules {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+  &__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  &__row {
+    display: grid;
+    gap: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 0.65rem;
+  }
+  &__name {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 5rem 2rem;
+    gap: 0.4rem;
+    align-items: center;
+    button {
+      width: 2rem;
+    }
+  }
+  &__value {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 7rem;
+    gap: 0.4rem;
+    input {
+      font-family: monospace;
+      font-size: 0.75rem;
+    }
+  }
+  .form-select {
+    min-width: 0;
+    width: 100%;
+    padding-left: 0.4rem;
+    padding-right: 0.3rem;
+  }
+  @media (max-width: 340px) {
+    &__value {
+      grid-template-columns: minmax(0, 1fr);
+      .form-select {
+        justify-self: end;
+        width: 7rem;
+      }
+    }
+  }
+}

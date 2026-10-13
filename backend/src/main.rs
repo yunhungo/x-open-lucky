@@ -6,6 +6,8 @@ mod backup;
 mod certificates;
 mod dns;
 mod error;
+mod header_rules;
+mod http3;
 mod jobs;
 mod listeners;
 mod models;
@@ -13,6 +15,8 @@ mod proxy;
 mod resources;
 mod store;
 mod telemetry;
+mod template_policy;
+mod web_options;
 use anyhow::{Context, Result};
 use axum::{
     extract::State,
@@ -43,6 +47,8 @@ pub struct Config {
     admin_addr: SocketAddr,
     http_addr: SocketAddr,
     https_addr: SocketAddr,
+    http3_addr: SocketAddr,
+    public_http3_port: u16,
     public_https_port: u16,
     listeners: Vec<listeners::Listener>,
     secure_cookie: bool,
@@ -57,9 +63,13 @@ pub struct AppState {
     http: reqwest::Client,
     ipv4: reqwest::Client,
     ipv6: reqwest::Client,
-    rules: Arc<RwLock<Vec<models::WebRule>>>,
+    rules: Arc<RwLock<proxy::Routes>>,
     resolver: Arc<proxy::Resolver>,
-    proxy_client: proxy::ProxyClient,
+    proxy_clients: Arc<RwLock<HashMap<(String, u64), proxy::ProxyClient>>>,
+    h3_resolver: Arc<proxy::Resolver>,
+    tls_configs: Arc<std::sync::RwLock<proxy::TlsConfigs>>,
+    h3_connections: Arc<Semaphore>,
+    h3_requests: Arc<Semaphore>,
     jobs: Arc<Mutex<HashSet<String>>>,
     job_limit: Arc<Semaphore>,
     acme_limit: Arc<Semaphore>,
@@ -135,12 +145,22 @@ async fn main() -> Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .ok();
+    let https_addr = env("OPENLUCKY_HTTPS_ADDR", "[::]:58444").parse()?;
+    let public_https_port = env("OPENLUCKY_PUBLIC_HTTPS_PORT", "58444").parse()?;
     let config = Config {
         data_dir: PathBuf::from(env("OPENLUCKY_DATA", "data")),
         admin_addr: env("OPENLUCKY_ADMIN_ADDR", "0.0.0.0:56002").parse()?,
         http_addr: env("OPENLUCKY_HTTP_ADDR", "[::]:58081").parse()?,
-        https_addr: env("OPENLUCKY_HTTPS_ADDR", "[::]:58444").parse()?,
-        public_https_port: env("OPENLUCKY_PUBLIC_HTTPS_PORT", "58444").parse()?,
+        https_addr,
+        public_https_port,
+        http3_addr: match env("OPENLUCKY_HTTP3_ADDR", "").as_str() {
+            "" => https_addr,
+            raw => raw.parse()?,
+        },
+        public_http3_port: match env("OPENLUCKY_PUBLIC_HTTP3_PORT", "").as_str() {
+            "" => public_https_port,
+            raw => raw.parse()?,
+        },
         listeners: listeners::parse(&env("OPENLUCKY_LISTENERS", "[]"))?,
         secure_cookie: env("OPENLUCKY_SECURE_COOKIE", "false") == "true",
         build_sha: env(
@@ -149,6 +169,10 @@ async fn main() -> Result<()> {
         ),
         lego_bin: env("OPENLUCKY_LEGO_BIN", "lego"),
     };
+    anyhow::ensure!(
+        config.http3_addr.port() != 0 && config.public_http3_port != 0,
+        "HTTP/3 端口不能为 0"
+    );
     let store = store::Store::open(&config.data_dir).await?;
     let initialized: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM admin")
         .fetch_one(&store.pool)
@@ -183,7 +207,11 @@ async fn main() -> Result<()> {
         ipv6: base().local_address("::".parse::<IpAddr>()?).build()?,
         rules: Arc::default(),
         resolver: Arc::default(),
-        proxy_client: proxy::client(),
+        proxy_clients: Arc::default(),
+        h3_resolver: Arc::default(),
+        tls_configs: Arc::default(),
+        h3_connections: Arc::new(Semaphore::new(64)),
+        h3_requests: Arc::new(Semaphore::new(256)),
         jobs: Arc::default(),
         job_limit: Arc::new(Semaphore::new(4)),
         acme_limit: Arc::new(Semaphore::new(1)),
@@ -228,7 +256,9 @@ async fn main() -> Result<()> {
         .layer(Extension(listeners::Ingress {
             listener: "default".into(),
             tls: false,
+            tls13: false,
             https_port: config.public_https_port,
+            http3_port: config.public_http3_port,
         }))
         .with_state(state.clone());
     let admin = tokio::net::TcpListener::bind(config.admin_addr).await?;

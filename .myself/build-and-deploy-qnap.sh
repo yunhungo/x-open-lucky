@@ -15,13 +15,7 @@ for value in "$REMOTE_ROOT" "$DOCKER_BIN"; do [[ "$value" =~ ^/[a-zA-Z0-9_./-]+$
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 if [[ ${OPENLUCKY_SKIP_CHECKS:-0} != 1 ]]; then
-  cargo fmt --check
-  cargo clippy --all-targets --locked -- -D warnings
-  cargo test --locked
-  cargo build --locked
-  python3 backend/tests/smoke.py
-  python3 backend/tests/deployment.py
-  (cd frontend && npm ci && npm run build && npx playwright test)
+  .myself/check.sh
 fi
 if command -v docker-buildx >/dev/null; then BUILDX=(docker-buildx); else BUILDX=(docker buildx); fi
 # Docker Desktop 卸载后可能留有失效的 credsStore。只为公开镜像拉取使用临时配置。

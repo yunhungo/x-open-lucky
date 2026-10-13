@@ -32,15 +32,16 @@ COPY --from=backend /openlucky /usr/local/bin/openlucky
 RUN setcap cap_net_bind_service=+ep /usr/local/bin/openlucky
 COPY --from=acme /lego /usr/local/bin/lego
 COPY --from=frontend /src/frontend/dist /app/frontend
-COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
+COPY LICENSE LICENSE-APACHE-2.0 THIRD_PARTY_NOTICES.md /app/
 ARG BUILD_SHA=dev
 LABEL org.opencontainers.image.title="OpenLucky" \
+    org.opencontainers.image.licenses="MIT" \
     org.opencontainers.image.source="https://github.com/yunhungo/x-open-lucky" \
     org.opencontainers.image.revision=$BUILD_SHA
 ENV OPENLUCKY_DATA=/data OPENLUCKY_FRONTEND=/app/frontend
 WORKDIR /app
 USER 10001:10001
-EXPOSE 56002 58081 58444
+EXPOSE 56002 58081 58444 58444/udp
 HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=3 \
     CMD curl --fail --silent http://127.0.0.1:56002/healthz || exit 1
 ENTRYPOINT ["/usr/local/bin/openlucky"]

@@ -31,6 +31,15 @@ use std::{
     time::Duration,
 };
 
+pub struct Route {
+    pub rule: WebRule,
+    pub client: ProxyClient,
+    pub target: url::Url,
+    pub request_headers: crate::header_rules::Rules,
+    pub response_headers: crate::header_rules::Rules,
+}
+pub type Routes = HashMap<(String, String), Arc<Route>>;
+pub type TlsConfigs = HashMap<(String, String), Arc<rustls::ServerConfig>>;
 pub type ProxyClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>;
 #[derive(Debug, Default)]
 pub struct Resolver(pub RwLock<HashMap<(String, String), ActiveCertificate>>);
@@ -60,17 +69,21 @@ impl ResolvesServerCert for ScopedResolver {
             .map(|cert| cert.key.clone())
     }
 }
-pub fn client() -> ProxyClient {
+pub fn client(version: &str, connect_timeout: u64) -> ProxyClient {
     let mut http = HttpConnector::new();
     http.enforce_http(false);
-    http.set_connect_timeout(Some(Duration::from_secs(10)));
-    let connector = HttpsConnectorBuilder::new()
+    http.set_connect_timeout(Some(Duration::from_secs(connect_timeout)));
+    let builder = HttpsConnectorBuilder::new()
         .with_webpki_roots()
-        .https_or_http()
-        .enable_http1()
-        .enable_http2()
-        .wrap_connector(http);
+        .https_or_http();
+    let connector = match version {
+        "http1" => builder.enable_http1().wrap_connector(http),
+        "http2" => builder.enable_http2().wrap_connector(http),
+        _ => builder.enable_http1().enable_http2().wrap_connector(http),
+    };
     Client::builder(TokioExecutor::new())
+        .http2_only(version == "http2")
+        .pool_max_idle_per_host(64)
         .pool_idle_timeout(Duration::from_secs(60))
         .build(connector)
 }
@@ -78,25 +91,100 @@ pub async fn refresh(state: &AppState) -> Result<()> {
     let values = state.store.list("web").await?;
     let mut rules = Vec::new();
     let mut certificates = HashMap::new();
+    let mut h3_certificates = HashMap::new();
+    let mut tls_configs = HashMap::new();
+    let mut client_keys = std::collections::HashSet::new();
     for value in values {
         let rule: WebRule = serde_json::from_value(value)?;
         if !rule.enabled {
             continue;
         }
-        if !rule.certificate_id.is_empty() {
+        client_keys.insert((
+            rule.options.upstream_version.clone(),
+            rule.options.connect_timeout,
+        ));
+        if !rule.certificate_id.is_empty() && rule.options.access_mode != "http" {
             if let Ok(cert) = state
                 .store
                 .get::<Certificate>("certificates", &rule.certificate_id)
                 .await
             {
                 if let Ok(key) = crate::certificates::load(&state.config.data_dir, &cert).await {
-                    certificates.insert((rule.listener.clone(), rule.domain.clone()), key);
+                    let identity = (rule.listener.clone(), rule.domain.clone());
+                    if rule.options.http3 {
+                        h3_certificates.insert(identity.clone(), key.clone());
+                    }
+                    let versions = if rule.options.tls_min == "1.3" {
+                        vec![&rustls::version::TLS13]
+                    } else {
+                        vec![&rustls::version::TLS13, &rustls::version::TLS12]
+                    };
+                    let mut tls = rustls::ServerConfig::builder_with_protocol_versions(&versions)
+                        .with_no_client_auth()
+                        .with_cert_resolver(Arc::new(ScopedResolver {
+                            inner: state.resolver.clone(),
+                            listener: rule.listener.clone(),
+                        }));
+                    if rule.options.http2 {
+                        tls.alpn_protocols.push(b"h2".to_vec());
+                    }
+                    if rule.options.http1 {
+                        tls.alpn_protocols.push(b"http/1.1".to_vec());
+                    }
+                    tls_configs.insert(identity.clone(), Arc::new(tls));
+                    certificates.insert(identity, key);
                 }
             }
         }
         rules.push(rule);
     }
-    *state.rules.write().await = rules;
+    let mut clients = state.proxy_clients.write().await;
+    clients.retain(|key, _| client_keys.contains(key));
+    for (version, timeout) in client_keys {
+        clients
+            .entry((version.clone(), timeout))
+            .or_insert_with(|| client(&version, timeout));
+    }
+    let routes = rules
+        .into_iter()
+        .map(|rule| {
+            let client = clients
+                .entry((
+                    rule.options.upstream_version.clone(),
+                    rule.options.connect_timeout,
+                ))
+                .or_insert_with(|| {
+                    client(&rule.options.upstream_version, rule.options.connect_timeout)
+                })
+                .clone();
+            let target = url::Url::parse(&rule.target)?;
+            let request_headers =
+                crate::header_rules::Rules::compile(&rule.options.request_headers, false)?;
+            let response_headers =
+                crate::header_rules::Rules::compile(&rule.options.response_headers, true)?;
+            Ok((
+                (rule.listener.clone(), rule.domain.clone()),
+                Arc::new(Route {
+                    rule,
+                    client,
+                    target,
+                    request_headers,
+                    response_headers,
+                }),
+            ))
+        })
+        .collect::<Result<Routes>>()?;
+    drop(clients);
+    *state.rules.write().await = routes;
+    *state
+        .tls_configs
+        .write()
+        .map_err(|_| anyhow::anyhow!("TLS state unavailable"))? = tls_configs;
+    *state
+        .h3_resolver
+        .0
+        .write()
+        .map_err(|_| anyhow::anyhow!("HTTP/3 state unavailable"))? = h3_certificates;
     *state
         .resolver
         .0
@@ -215,16 +303,16 @@ async fn forward_inner(
     };
     let domain = authority.host().to_lowercase();
     entry.host = Telemetry::bounded(&domain, 253);
-    let rule = state
+    let route = state
         .rules
         .read()
         .await
-        .iter()
-        .find(|r| r.domain == domain && r.listener == ingress.listener)
+        .get(&(ingress.listener.clone(), domain.clone()))
         .cloned();
-    let Some(rule) = rule else {
+    let Some(route) = route else {
         return (StatusCode::NOT_FOUND, "未配置此域名").into_response();
     };
+    let rule = &route.rule;
     entry.service_id = rule.id.clone();
     let path = request
         .uri()
@@ -252,10 +340,25 @@ async fn forward_inner(
         )
             .into_response();
     }
-    let target = match url::Url::parse(&rule.target) {
-        Ok(t) => t,
-        Err(_) => return (StatusCode::BAD_GATEWAY, "代理配置无效").into_response(),
+    let version_allowed = match request.version() {
+        axum::http::Version::HTTP_09
+        | axum::http::Version::HTTP_10
+        | axum::http::Version::HTTP_11 => rule.options.http1,
+        axum::http::Version::HTTP_2 => rule.options.http2,
+        axum::http::Version::HTTP_3 => rule.options.http3,
+        _ => false,
     };
+    if !version_allowed || (tls && rule.options.tls_min == "1.3" && !ingress.tls13) {
+        entry.error = "接入协议版本未启用".into();
+        return (StatusCode::MISDIRECTED_REQUEST, "接入协议版本未启用").into_response();
+    }
+    if (tls && rule.options.access_mode == "http")
+        || (!tls && rule.options.access_mode == "https" && !rule.https_redirect)
+    {
+        entry.error = "接入协议未启用".into();
+        return (StatusCode::FORBIDDEN, "接入协议未启用").into_response();
+    }
+    let target = &route.target;
     let upstream = format!("{}{}", rule.target.trim_end_matches('/'), path);
     let uri = match upstream.parse::<axum::http::Uri>() {
         Ok(uri) => uri,
@@ -279,6 +382,22 @@ async fn forward_inner(
     } else {
         None
     };
+    if upgrade && rule.options.upstream_version == "http2" {
+        entry.error = "升级隧道需要上游 HTTP/1.1".into();
+        return (StatusCode::BAD_REQUEST, "升级隧道需要上游 HTTP/1.1").into_response();
+    }
+    let template_context = crate::header_rules::context(
+        crate::header_rules::RequestContext {
+            request: &request,
+            peer,
+            authority: &authority,
+            tls,
+            upstream: &target[url::Position::BeforeHost..url::Position::AfterPort],
+            id: &entry.request_id,
+        },
+        &route.request_headers,
+        &route.response_headers,
+    );
     strip_hop(request.headers_mut(), upgrade);
     if let Ok(value) = HeaderValue::from_str(&state.proxy_id) {
         request.headers_mut().insert("x-openlucky-via", value);
@@ -314,11 +433,26 @@ async fn forward_inner(
         return (StatusCode::BAD_GATEWAY, "目标 Host 无效").into_response();
     };
     request.headers_mut().insert(header::HOST, value);
+    if route
+        .request_headers
+        .apply(request.headers_mut(), &template_context)
+        .is_err()
+    {
+        entry.error = "请求头模板执行失败".into();
+        return (StatusCode::BAD_GATEWAY, "请求头模板执行失败").into_response();
+    }
     *request.uri_mut() = uri;
     // 下游 HTTP/2 不代表上游也支持 HTTP/2；由连接器按上游协议协商。
-    *request.version_mut() = axum::http::Version::HTTP_11;
-    let result =
-        tokio::time::timeout(Duration::from_secs(60), state.proxy_client.request(request)).await;
+    *request.version_mut() = if rule.options.upstream_version == "http2" {
+        axum::http::Version::HTTP_2
+    } else {
+        axum::http::Version::HTTP_11
+    };
+    let result = tokio::time::timeout(
+        Duration::from_secs(rule.options.response_timeout),
+        route.client.request(request),
+    )
+    .await;
     let mut response = match result {
         Ok(Ok(response)) => response,
         Ok(Err(_)) => {
@@ -360,5 +494,30 @@ async fn forward_inner(
     }
     let upgraded = upgrade && response.status() == StatusCode::SWITCHING_PROTOCOLS;
     strip_hop(response.headers_mut(), upgraded);
+    let response_context = if route.response_headers.dynamic() {
+        minijinja::context! { response => minijinja::context! { status => response.status().as_u16() }, ..template_context }
+    } else {
+        minijinja::Value::UNDEFINED
+    };
+    if route
+        .response_headers
+        .apply(response.headers_mut(), &response_context)
+        .is_err()
+    {
+        entry.error = "响应头模板执行失败".into();
+        return (StatusCode::BAD_GATEWAY, "响应头模板执行失败").into_response();
+    }
+    // Do not advertise an upstream's unrelated QUIC endpoint.
+    response.headers_mut().remove("alt-svc");
+    if tls && rule.options.http3 {
+        if let Ok(value) = HeaderValue::from_str(&format!("h3=\":{}\"; ma=300", ingress.http3_port))
+        {
+            response.headers_mut().insert("alt-svc", value);
+        }
+    } else if tls {
+        response
+            .headers_mut()
+            .insert("alt-svc", HeaderValue::from_static("clear"));
+    }
     response.map(Body::new)
 }

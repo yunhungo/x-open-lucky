@@ -2,14 +2,16 @@
 
 作者：yunhungo
 
+本文保留一次迁移的验证方法与结果，域名及地址已替换为示例。
+
 已部署 `openlucky:full-migration-20261012`，运行标识 `5e0b7a0-full-migration-20261012`（工作区构建，非新 Git 提交）。
 
-- 私网入口：`100.64.0.5:443`，22 条启用规则；保持 Tailnet 访问范围。
+- 私网入口：`100.64.0.10:443`，22 条启用规则；保持 Tailnet 访问范围。
 - 公网入口：IPv6 `[::]:41003`，同端口 HTTP 跳转与 HTTPS。20 条公网配置中仅 `vw.s`、`headscale.s`、`plane.s` 启用，沿用旧 Lucky 状态。
 - 合计 43 条 Web 规则，25 条启用；按要求不迁移 ailedger。
-- DDNS：OpenLucky 自行维护 `*.s.yunhung.com` AAAA，36 秒检测周期，TTL 自动、DNS only。沿用 Lucky 的四个 IP 查询接口，已确认手动与定时执行均成功，地址与旧配置一致。
-- 两张正式 Let's Encrypt 证书覆盖 `*.t.yunhung.com` 与 `*.s.yunhung.com`，由 OpenLucky 自动续期。
-- `lucky.t.yunhung.com` 已转到 OpenLucky 管理面板。旧 Lucky 容器已停止，重启策略从 `always` 改为 `no`，防止重启后抢占端口或重复维护 DDNS。
+- DDNS：OpenLucky 自行维护 `*.s.example.com` AAAA，36 秒检测周期，TTL 自动、DNS only。沿用 Lucky 的四个 IP 查询接口，已确认手动与定时执行均成功，地址与旧配置一致。
+- 两张正式 Let's Encrypt 证书覆盖 `*.t.example.com` 与 `*.s.example.com`，由 OpenLucky 自动续期。
+- `lucky.t.example.com` 已转到 OpenLucky 管理面板。旧 Lucky 容器已停止，重启策略从 `always` 改为 `no`，防止重启后抢占端口或重复维护 DDNS。
 - Lucky 的端口转发、STUN、Cloudflared、Rclone、网络唤醒、计划任务无任务；DLNA、WebDAV、FTP、FileBrowser 未启用；全局黑名单与子规则使用的黑名单无条目、Coraza 无实例。
 
 ## 验证

@@ -4,6 +4,11 @@
  * @author yunhungo
  */
 import type { Kind, Resource } from '@/lib/contracts';
+import {
+  defaultWebOptions,
+  optionValues,
+  parseOptions,
+} from '@/lib/web-options';
 export type FormValues = Record<string, string | number | boolean>;
 export interface Field {
   key: string;
@@ -38,6 +43,7 @@ export const defaults: Record<Kind, FormValues> = {
     proxied: false,
   },
   web: {
+    ...optionValues(defaultWebOptions),
     listener: 'default',
     name: '',
     enabled: true,
@@ -184,8 +190,6 @@ export const fields: Record<Kind, Field[]> = {
       required: true,
     },
     { key: 'certificate_id', label: 'SSL 证书', type: 'select' },
-    { key: 'https_redirect', label: 'HTTP 跳转至 HTTPS', type: 'switch' },
-    { key: 'preserve_host', label: '保留原始 Host', type: 'switch' },
     { key: 'enabled', label: '启用', type: 'switch' },
   ],
   certificates: [
@@ -242,12 +246,23 @@ export function initial(kind: Kind, item?: Resource): FormValues {
       else if (key === 'domains' && Array.isArray(value))
         values[key] = value.join(', ');
     }
+  if (item && 'options' in item)
+    Object.assign(values, optionValues(item.options));
   return values;
 }
 export function payload(
   kind: Kind,
   values: FormValues,
 ): Record<string, unknown> {
+  if (kind === 'web')
+    return {
+      ...Object.fromEntries(
+        Object.entries(values).filter(([key]) => !key.startsWith('option_')),
+      ),
+      name: String(values.name).trim(),
+      domain: String(values.domain).trim().toLowerCase(),
+      options: parseOptions(values),
+    };
   if (kind === 'credentials')
     return {
       name: String(values.name).trim(),

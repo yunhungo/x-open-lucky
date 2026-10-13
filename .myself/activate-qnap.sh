@@ -41,7 +41,7 @@ if [ -f "$ROOT/runtime.env" ]; then
   set +a
 fi
 export OPENLUCKY_IMAGE="$IMAGE" OPENLUCKY_ROOT="$ROOT"
-HOST=${OPENLUCKY_ADMIN_ADDR:-192.168.1.85:56002}
+HOST=${OPENLUCKY_ADMIN_ADDR:-127.0.0.1:56002}
 compose() { $DOCKER compose -p openlucky -f "$COMPOSE" "$@"; }
 rollback() {
   trap - EXIT
@@ -80,7 +80,7 @@ if [ -n "$OLD_IMAGE" ]; then
 fi
 ROLLBACK_NEEDED=1
 if ! compose up -d --no-deps app; then rollback; fi
-HOST=${OPENLUCKY_ADMIN_ADDR:-192.168.1.85:56002}
+HOST=${OPENLUCKY_ADMIN_ADDR:-127.0.0.1:56002}
 READY=0
 for attempt in $(seq 1 40); do
   RESPONSE=$($DOCKER exec openlucky curl --fail --silent --max-time 5 "http://$HOST/healthz" 2>/dev/null || true)

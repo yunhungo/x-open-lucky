@@ -8,6 +8,8 @@
 | --- | --- | --- |
 | 服务与异步 | Axum / Tokio | API 权限、参数合同、任务生命周期 |
 | HTTP 与 WebSocket | Hyper / hyper-util | 域名路由、上游选择、转发头政策 |
+| HTTP/3 | h3 / h3-quinn / Quinn | 有界 UDP 连接、流控、桥接既有代理 |
+| 动态模板 | MiniJinja | 编译时表达式政策、只读请求上下文、执行与输出上限 |
 | TLS | rustls / rustls-pemfile | SNI 映射、证书有效性、热加载 |
 | 数据库 | SQLx / SQLite WAL | 版本化迁移、资源版本、事务恢复 |
 | 密码与凭据 | Argon2id / AES-GCM | 一次性初始化、会话撤销、密钥保存 |
@@ -28,7 +30,9 @@ lego 5.x 已改变 CLI 合同，不能仅修改镜像版本号升级。升级须
 - `certificates.rs`：ACME 与 PEM 导入。只把凭据放入子进程环境，不拼接 shell。发布前验证 SAN、有效期与私钥匹配，新证书写入新目录后原子切换 `live` 符号链接。
 - `listeners.rs`：按入口隔离 SNI 证书及域名路由；附加入口由 `OPENLUCKY_LISTENERS` JSON 配置，IPv6 入口只接收 IPv6。可选同端口 HTTP/TLS 使用 Tokio peek 与 axum-server/rustls，不消费探测字节；探测和握手各限时 10 秒。
 - `telemetry/`：访问日志、独立小时聚合、有界队列、容量与时间清理、受保护的分页查询、进程和容器资源采样。独立数据库及迁移位于 `telemetry.sqlite` 和 `telemetry_migrations/`，不把高频代理错误写入配置事件表。具体口径、脱敏和丢失边界见 [访问与性能观测](observability.md)。
-- `proxy.rs`：只转发已启用的域名。原始字节流和 WebSocket 使用 Hyper 原生实现；HTTPS 上游使用可信根校验。清除用户提供的转发头，按实际连接 IP 重建；管理服务不信任外部 `X-Forwarded-For`。
+- `web_options.rs` / `header_rules.rs` / `template_policy.rs`：Web 合同、预编译请求头操作与动态模板。MiniJinja 固定版本以校验其 AST；模板只允许有界字段、条件及过滤器，不提供文件、网络、任意函数、循环和算术扩展。固定头不进入模板执行路径。
+- `http3.rs`：UDP/TLS 1.3 与 HTTP/3 流桥接；全进程最多 64 个 QUIC 连接和 256 个请求，每连接 32 个请求流、512 KiB 接收窗口、512 KiB 发送窗口，每流 128 KiB 接收窗口和 2 帧通道。关闭 0-RTT，首次握手要求地址验证；退出时关闭端点和关联任务。
+- `proxy.rs`：以哈希表查找共享路由快照，配置刷新时预解析 URL、编译头与 TLS 配置；按上游版本/连接超时复用连接池，每目标最多 64 条空闲连接、60 秒空闲回收。只转发已启用的域名。原始字节流和 WebSocket 使用 Hyper 原生实现；HTTPS 上游使用可信根校验。清除用户提供的转发头，按实际连接 IP 重建；管理服务不信任外部 `X-Forwarded-For`。
 - `backup.rs`：Argon2id 派生独立备份密钥，AES-GCM 验证完整性。先校验完整资源图和全部 PEM，再生成新资源 ID 与证书目录，最后事务替换配置；不会恢复旧管理员或旧会话。
 
 ## 扩展原则

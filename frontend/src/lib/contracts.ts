@@ -5,6 +5,7 @@
  */
 import { z } from 'zod';
 import { performanceSchema } from './observability';
+import { defaultWebOptions, webOptionsSchema } from './web-options';
 export const kinds = ['ddns', 'web', 'certificates', 'credentials'] as const;
 export type Kind = (typeof kinds)[number];
 export const statusSchema = z.object({
@@ -42,6 +43,7 @@ export const ddnsSchema = z.object({
   proxied: z.boolean(),
 });
 export const webSchema = z.object({
+  options: webOptionsSchema.default(defaultWebOptions),
   listener: z.string().default('default'),
   ...base,
   enabled: z.boolean(),
@@ -91,6 +93,8 @@ export const overviewSchema = z.object({
   admin_addr: z.string(),
   http_addr: z.string(),
   https_addr: z.string(),
+  http3_addr: z.string(),
+  public_http3_port: z.number(),
   listeners: z
     .array(
       z.object({
@@ -98,6 +102,8 @@ export const overviewSchema = z.object({
         addr: z.string(),
         https_port: z.number(),
         mixed: z.boolean(),
+        http3_addr: z.string().nullable().optional(),
+        http3_port: z.number().nullable().optional(),
       }),
     )
     .default([]),

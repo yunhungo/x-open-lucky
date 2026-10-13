@@ -178,7 +178,7 @@ def main():
             with sqlite3.connect(root / 'data/openlucky.sqlite') as db:
                 raw = db.execute('SELECT data FROM resources WHERE kind="credentials"').fetchone()[0]
                 assert credential['secrets']['token'] not in raw
-                assert db.execute('SELECT COUNT(*) FROM _sqlx_migrations').fetchone()[0] == 3
+                assert db.execute('SELECT COUNT(*) FROM _sqlx_migrations').fetchone()[0] == 4
             call('PUT', f'/resources/credentials/{cid}', {**credential, 'secrets': {'token': ''}})
             call('PUT', f'/resources/credentials/{cid}', {**credential, 'revision': 0}, expected=409)
             check('CSRF checks, encrypted at-rest credentials and SQL migrations')

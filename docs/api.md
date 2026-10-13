@@ -33,3 +33,11 @@
 `GET /healthz` 无需登录，返回 `ok / build_sha / version`，供部署时核对精确构建提交。
 
 访问查询的 `since / until` 为 Unix 秒，`before` 是上一页返回的游标，`errors=true` 同时包含 4xx/5xx 与流/隧道错误。`q` 对路径、域名、客户端 IP、请求 ID 作字面子串匹配。`avg_duration_ms` 表示响应头耗时；无请求时返回 `null`。观测合同见 `frontend/src/lib/observability.ts` 及 [观测说明](observability.md)。
+
+## Web 高级配置
+
+`web.options` 默认 `{access_mode:"both", http1:true, http2:true, http3:false, tls_min:"1.2", upstream_version:"auto", connect_timeout:10, response_timeout:60, request_headers:{}, response_headers:{}}`。`access_mode` 为 `both/http/https`，上游版本为 `auto/http1/http2`；连接超时 1–60 秒，响应头超时 1–600 秒。后者不限制已开始的流式响应总时长。
+
+头配置在 API 中为名称到字符串/null 的映射：字符串设置（含 MiniJinja 动态模板），null 删除。每组最多 32 项、总原始值最多 32 KiB；运行时每值最多 8 KiB、每组最多 32 KiB。模板语法和上下文在保存时验证；运行时缺失变量、非法字符或超限返回 502，并记录不含模板值的错误。完整变量与限制见 [Web 配置](web-services.md)。
+
+旧配置经 `0004_web_options.sql` 补齐默认值，旧备份恢复同样应用默认值。`overview` 增加 `http3_addr`、`public_http3_port`；附加入口增加可选的 `http3_addr/http3_port`。

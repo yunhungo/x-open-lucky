@@ -3,12 +3,9 @@
 // @author yunhungo
 use crate::{proxy, AppState};
 use axum::{middleware::AddExtension, Extension, Router};
-use axum_server::{
-    accept::Accept,
-    tls_rustls::{RustlsAcceptor, RustlsConfig},
-};
+use axum_server::accept::Accept;
 use serde::{Deserialize, Serialize};
-use std::{future::Future, io, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, io, net::SocketAddr, pin::Pin, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -23,11 +20,25 @@ pub struct Listener {
     pub https_port: u16,
     #[serde(default)]
     pub mixed: bool,
+    #[serde(default)]
+    pub http3_addr: Option<SocketAddr>,
+    #[serde(default)]
+    pub http3_port: Option<u16>,
+}
+impl Listener {
+    pub fn quic_addr(&self) -> SocketAddr {
+        self.http3_addr.unwrap_or(self.addr)
+    }
+    pub fn quic_port(&self) -> u16 {
+        self.http3_port.unwrap_or(self.https_port)
+    }
 }
 #[derive(Clone)]
 pub struct Ingress {
     pub listener: String,
     pub tls: bool,
+    pub tls13: bool,
+    pub http3_port: u16,
     pub https_port: u16,
 }
 pub fn parse(raw: &str) -> anyhow::Result<Vec<Listener>> {
@@ -44,7 +55,9 @@ pub fn parse(raw: &str) -> anyhow::Result<Vec<Listener>> {
                     .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
                 && ids.insert(&listener.id)
                 && listener.addr.port() != 0
-                && listener.https_port != 0,
+                && listener.https_port != 0
+                && listener.quic_addr().port() != 0
+                && listener.quic_port() != 0,
             "监听入口名称或端口无效，名称必须唯一且不能使用 default"
         );
     }
@@ -54,7 +67,7 @@ pub trait ProxyIo: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> ProxyIo for T {}
 #[derive(Clone)]
 struct Acceptor {
-    tls: RustlsAcceptor,
+    state: AppState,
     listener: Listener,
 }
 impl<S: Send + 'static> Accept<TcpStream, S> for Acceptor {
@@ -77,14 +90,44 @@ impl<S: Send + 'static> Accept<TcpStream, S> for Acceptor {
             } else {
                 true
             };
+            let mut tls13 = false;
             let stream: Box<dyn ProxyIo> = if tls {
-                Box::new(config.tls.accept(stream, ()).await?.0)
+                let handshake = async {
+                    let hello = tokio_rustls::LazyConfigAcceptor::new(
+                        rustls::server::Acceptor::default(),
+                        stream,
+                    )
+                    .await?;
+                    let domain = hello
+                        .client_hello()
+                        .server_name()
+                        .unwrap_or_default()
+                        .to_lowercase();
+                    let tls_config = config
+                        .state
+                        .tls_configs
+                        .read()
+                        .ok()
+                        .and_then(|configs| {
+                            configs.get(&(config.listener.id.clone(), domain)).cloned()
+                        })
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::PermissionDenied, "Unknown TLS service")
+                        })?;
+                    hello.into_stream(tls_config).await
+                };
+                let secure = tokio::time::timeout(Duration::from_secs(10), handshake).await??;
+                tls13 =
+                    secure.get_ref().1.protocol_version() == Some(rustls::ProtocolVersion::TLSv1_3);
+                Box::new(secure)
             } else {
                 Box::new(stream)
             };
             let service = Extension(Ingress {
+                http3_port: config.listener.quic_port(),
                 listener: config.listener.id,
                 tls,
+                tls13,
                 https_port: config.listener.https_port,
             })
             .layer(service);
@@ -98,6 +141,8 @@ pub async fn serve(state: AppState) -> anyhow::Result<()> {
         addr: state.config.https_addr,
         https_port: state.config.public_https_port,
         mixed: false,
+        http3_addr: Some(state.config.http3_addr),
+        http3_port: Some(state.config.public_http3_port),
     }];
     configs.extend(state.config.listeners.clone());
     // Bind all addresses before accepting requests, so configuration failure is immediate.
@@ -119,16 +164,12 @@ pub async fn serve(state: AppState) -> anyhow::Result<()> {
     let mut servers = tokio::task::JoinSet::new();
     let mut handles = Vec::new();
     for (config, socket) in bound {
-        let resolver = proxy::ScopedResolver {
-            inner: state.resolver.clone(),
-            listener: config.id.clone(),
-        };
-        let mut tls = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_cert_resolver(Arc::new(resolver));
-        tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let endpoint = crate::http3::endpoint(&state, &config)?;
+        let h3_state = state.clone();
+        let h3_config = config.clone();
+        servers.spawn(async move { crate::http3::serve(h3_state, h3_config, endpoint).await });
         let acceptor = Acceptor {
-            tls: RustlsAcceptor::new(RustlsConfig::from_config(Arc::new(tls))),
+            state: state.clone(),
             listener: config,
         };
         let router = Router::new()

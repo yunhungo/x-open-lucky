@@ -4,6 +4,7 @@
  * @author yunhungo
  */
 import { useState } from 'react';
+import { WebOptionsEditor } from '@/components/WebOptionsEditor/WebOptionsEditor';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -52,7 +53,7 @@ export function ResourceEditor({
   });
   return (
     <SheetContent
-      className='sm:max-w-[480px] w-full gap-0'
+      className='sm:max-w-[520px] w-full gap-0'
       showCloseButton={!mutation.isPending}
       onEscapeKeyDown={(e) => {
         if (mutation.isPending) e.preventDefault();
@@ -188,6 +189,15 @@ export function ResourceEditor({
                 </div>
               );
             })}
+          {kind === 'web' && (
+            <WebOptionsEditor
+              values={values}
+              disabled={mutation.isPending}
+              change={(key, value) =>
+                setValues((v) => ({ ...v, [key]: value }))
+              }
+            />
+          )}
           {mutation.isError && (
             <p role='alert' className='text-sm text-destructive'>
               {errorText(mutation.error)}

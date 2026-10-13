@@ -34,7 +34,7 @@ def main():
         return
     token = remote(f'{docker} exec openlucky cat /data/setup-token').strip()
     access_file = Path(__file__).resolve().parent / 'qnap-access.json'
-    username = os.environ.get('OPENLUCKY_INITIAL_ADMIN', 'yunhungo')
+    username = os.environ.get('OPENLUCKY_INITIAL_ADMIN', 'admin')
     if not re.fullmatch(r'[a-zA-Z0-9_-]{3,50}', username):
         raise RuntimeError('管理员用户名无效')
     if access_file.exists():

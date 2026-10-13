@@ -7,9 +7,11 @@ cd "$(dirname "$0")/.."
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
+cargo build --locked --examples
 cargo build --locked
 (cd frontend && npm ci && npm run build)
 python3 backend/tests/smoke.py
+python3 backend/tests/web_protocols.py
 python3 backend/tests/deployment.py
 (cd frontend && npx playwright test)
 bash -n .myself/build-and-deploy-qnap.sh

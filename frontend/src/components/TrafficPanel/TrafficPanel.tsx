@@ -81,11 +81,7 @@ export function TrafficPanel({ serviceId = '' }: { serviceId?: string }) {
               <dd>{milliseconds(data.avg_duration_ms)}</dd>
             </div>
           </dl>
-          {data.requests > 0 ? (
-            <TrafficChart series={data.series} />
-          ) : (
-            <p className='telemetry-message text-muted-foreground'>暂无访问</p>
-          )}
+          {data.requests > 0 && <TrafficChart series={data.series} />}
           {data.stream_errors > 0 && (
             <p className='telemetry-message text-destructive'>
               流 / 隧道中断 {number(data.stream_errors)} 次
