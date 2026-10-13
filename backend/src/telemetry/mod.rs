@@ -3,6 +3,7 @@
 // @author yunhungo
 pub mod api;
 mod metrics;
+pub mod observation;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -57,6 +58,16 @@ struct Pending {
     normal: VecDeque<Access>,
     errors: VecDeque<Access>,
     buckets: HashMap<(i64, String), Bucket>,
+    sample_window: Option<std::time::Instant>,
+    successes: u32,
+}
+struct Summary<'a> {
+    time: i64,
+    service: &'a str,
+    status: u16,
+    duration_ms: f64,
+    stream: bool,
+    failed: bool,
 }
 #[derive(Clone, Serialize)]
 pub struct Policy {
@@ -64,6 +75,7 @@ pub struct Policy {
     pub max_rows: i64,
     pub database_limit_bytes: u64,
     pub traffic_days: i64,
+    pub success_logs_per_second: u32,
 }
 impl Policy {
     pub fn from_env() -> Result<Self> {
@@ -83,6 +95,7 @@ impl Policy {
             max_rows: value("OPENLUCKY_ACCESS_ROWS", 20000, 1000, 100000)?,
             database_limit_bytes: 64 * 1024 * 1024,
             traffic_days: 30,
+            success_logs_per_second: value("OPENLUCKY_ACCESS_SUCCESS_RATE", 200, 1, 10000)? as u32,
         })
     }
 }
@@ -91,10 +104,13 @@ pub struct Telemetry {
     policy: Policy,
     pending: Mutex<Pending>,
     dropped_logs: AtomicU64,
+    sampled_logs: AtomicU64,
     dropped_buckets: AtomicU64,
     write_failures: AtomicU64,
     last_flush: AtomicU64,
+    last_prune: AtomicU64,
     performance: Mutex<metrics::Sampler>,
+    flush_ready: tokio::sync::Notify,
 }
 impl Telemetry {
     pub async fn open(root: &Path, policy: Policy) -> Result<Arc<Self>> {
@@ -104,10 +120,13 @@ impl Telemetry {
             policy,
             pending: Mutex::default(),
             dropped_logs: AtomicU64::new(0),
+            sampled_logs: AtomicU64::new(0),
             dropped_buckets: AtomicU64::new(0),
             write_failures: AtomicU64::new(0),
             last_flush: AtomicU64::new(0),
+            last_prune: AtomicU64::new(0),
             performance: Mutex::new(metrics::Sampler::default()),
+            flush_ready: tokio::sync::Notify::new(),
         });
         telemetry.flush().await?;
         Ok(telemetry)
@@ -120,18 +139,27 @@ impl Telemetry {
         }
         value[..end].chars().filter(|c| !c.is_control()).collect()
     }
-    pub fn record(&self, mut entry: Access) {
-        entry.host = Self::bounded(&entry.host, 253);
-        entry.path = Self::bounded(entry.path.split(['?', '#']).next().unwrap_or("/"), 512);
-        entry.method = Self::bounded(&entry.method, 16);
-        entry.listener = Self::bounded(&entry.listener, 64);
-        entry.error = Self::bounded(&entry.error, 160);
+    #[cfg(test)]
+    fn record(&self, entry: Access) {
+        self.collect(
+            Summary {
+                time: entry.time,
+                service: &entry.service_id,
+                status: entry.status,
+                duration_ms: entry.duration_ms,
+                stream: entry.phase != "request",
+                failed: entry.failure(),
+            },
+            || entry.clone(),
+        );
+    }
+    fn collect(&self, summary: Summary<'_>, make_entry: impl FnOnce() -> Access) {
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        let hour = entry.time / 3600 * 3600;
+        let hour = summary.time / 3600 * 3600;
         // 空 service_id 是全站总量；未匹配域名不生成新维度。
         for service in [
             Some(String::new()),
-            (!entry.service_id.is_empty()).then(|| entry.service_id.clone()),
+            (!summary.service.is_empty()).then(|| summary.service.to_owned()),
         ]
         .into_iter()
         .flatten()
@@ -142,15 +170,39 @@ impl Telemetry {
                 continue;
             }
             let bucket = pending.buckets.entry(key).or_default();
-            if entry.phase == "request" {
+            if !summary.stream {
                 bucket.requests += 1;
-                bucket.client_errors += i64::from((400..500).contains(&entry.status));
-                bucket.server_errors += i64::from(entry.status >= 500);
-                bucket.latency_ms += entry.duration_ms;
+                bucket.client_errors += i64::from((400..500).contains(&summary.status));
+                bucket.server_errors += i64::from(summary.status >= 500);
+                bucket.latency_ms += summary.duration_ms;
             } else {
                 bucket.stream_errors += 1;
             }
         }
+        if !summary.failed {
+            let now = std::time::Instant::now();
+            if pending
+                .sample_window
+                .is_none_or(|start| now.duration_since(start) >= Duration::from_secs(1))
+            {
+                pending.sample_window = Some(now);
+                pending.successes = 0;
+            }
+            if pending.successes >= self.policy.success_logs_per_second {
+                self.sampled_logs.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            pending.successes += 1;
+        }
+        drop(pending);
+        // 分配和清洗不占用聚合锁；限流的成功请求根本不构造明细。
+        let mut entry = make_entry();
+        entry.host = Self::bounded(&entry.host, 253);
+        entry.path = Self::bounded(entry.path.split(['?', '#']).next().unwrap_or("/"), 512);
+        entry.method = Self::bounded(&entry.method, 16);
+        entry.listener = Self::bounded(&entry.listener, 64);
+        entry.error = Self::bounded(&entry.error, 160);
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         let (queue, limit) = if entry.failure() {
             (&mut pending.errors, ERROR_QUEUE)
         } else {
@@ -161,6 +213,9 @@ impl Telemetry {
             self.dropped_logs.fetch_add(1, Ordering::Relaxed);
         }
         queue.push_back(entry);
+        if pending.normal.len() + pending.errors.len() >= 256 {
+            self.flush_ready.notify_one();
+        }
     }
     pub fn performance(&self) -> metrics::Performance {
         self.performance
@@ -172,16 +227,24 @@ impl Telemetry {
     pub async fn run(self: Arc<Self>, shutdown: tokio_util::sync::CancellationToken) {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut next_flush = tokio::time::Instant::now();
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
                 _ = interval.tick() => {
                     self.performance.lock().unwrap_or_else(|e| e.into_inner()).sample();
-                    if self.flush().await.is_err() {
-                        // 固定频率且无错误原文，避免凭据或请求 URL 进入控制台。
-                        tracing::warn!("Telemetry write failed; proxy remains available");
-                    }
                 }
+                _ = async {
+                    self.flush_ready.notified().await;
+                    tokio::time::sleep_until(next_flush).await;
+                } => {}
+            }
+            if self.flush().await.is_err() {
+                tracing::warn!("Telemetry write failed; proxy remains available");
+                next_flush = tokio::time::Instant::now() + Duration::from_secs(5);
+            } else {
+                // 限制阈值刷新频率，避免高峰时每批都触发 NAS 磁盘同步。
+                next_flush = tokio::time::Instant::now() + Duration::from_secs(1);
             }
         }
     }

@@ -21,7 +21,7 @@ export function TelemetryStatus() {
   return (
     <details className='telemetry-status'>
       <summary className={incomplete ? 'text-destructive' : ''}>
-        {incomplete ? '采集有丢失' : '保留策略'}
+        {incomplete ? '采集有丢失' : data.sampled_logs > 0 ? '成功明细有采样' : '保留策略'}
       </summary>
       <dl>
         <dt>访问明细</dt>
@@ -30,6 +30,10 @@ export function TelemetryStatus() {
         </dd>
         <dt>访问统计</dt>
         <dd>{data.policy.traffic_days} 天</dd>
+        <dt>成功明细采集上限</dt>
+        <dd>每秒 {number(data.policy.success_logs_per_second)} 条</dd>
+        <dt>本次运行采样略过</dt>
+        <dd>{number(data.sampled_logs)} 条（请求统计仍累计）</dd>
         <dt>已用空间</dt>
         <dd>
           {bytes(data.database_bytes)} /{' '}

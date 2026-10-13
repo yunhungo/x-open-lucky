@@ -6,6 +6,7 @@ mod backup;
 mod certificates;
 mod dns;
 mod error;
+mod gateway_limits;
 mod header_rules;
 mod http3;
 mod jobs;
@@ -54,6 +55,7 @@ pub struct Config {
     secure_cookie: bool,
     build_sha: String,
     lego_bin: String,
+    gateway_limits: gateway_limits::GatewayLimits,
 }
 #[derive(Clone)]
 pub struct AppState {
@@ -168,6 +170,7 @@ async fn main() -> Result<()> {
             option_env!("BUILD_SHA").unwrap_or("dev"),
         ),
         lego_bin: env("OPENLUCKY_LEGO_BIN", "lego"),
+        gateway_limits: gateway_limits::GatewayLimits::from_env()?,
     };
     anyhow::ensure!(
         config.http3_addr.port() != 0 && config.public_http3_port != 0,
@@ -210,8 +213,8 @@ async fn main() -> Result<()> {
         proxy_clients: Arc::default(),
         h3_resolver: Arc::default(),
         tls_configs: Arc::default(),
-        h3_connections: Arc::new(Semaphore::new(64)),
-        h3_requests: Arc::new(Semaphore::new(256)),
+        h3_connections: Arc::new(Semaphore::new(config.gateway_limits.connections)),
+        h3_requests: Arc::new(Semaphore::new(config.gateway_limits.requests)),
         jobs: Arc::default(),
         job_limit: Arc::new(Semaphore::new(4)),
         acme_limit: Arc::new(Semaphore::new(1)),

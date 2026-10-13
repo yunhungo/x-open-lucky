@@ -8,6 +8,7 @@ fn policy(rows: i64) -> Policy {
         max_rows: rows,
         database_limit_bytes: 64 * 1024 * 1024,
         traffic_days: 30,
+        success_logs_per_second: 10000,
     }
 }
 fn entry(status: u16) -> Access {
@@ -121,6 +122,84 @@ fn truncation_keeps_valid_unicode_and_removes_control_characters() {
     assert_eq!(
         metrics::cpu_ticks(&format!("12 (process (name)) {}", fields.join(" "))),
         Some(150)
+    );
+}
+
+#[tokio::test]
+async fn sampling_skips_construction_but_keeps_counts_and_errors_across_flushes() {
+    let dir = tempfile::tempdir().unwrap();
+    let telemetry = Telemetry::open(
+        dir.path(),
+        Policy {
+            success_logs_per_second: 2,
+            ..policy(5000)
+        },
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        telemetry.record(entry(200));
+    }
+    telemetry.flush().await.unwrap();
+    telemetry.collect(
+        Summary {
+            time: chrono::Utc::now().timestamp(),
+            service: "service-a",
+            status: 200,
+            duration_ms: 12.5,
+            stream: false,
+            failed: false,
+        },
+        || panic!("Sampled request must not construct a log"),
+    );
+    telemetry.record(entry(502));
+    telemetry.flush().await.unwrap();
+    assert_eq!(telemetry.sampled_logs.load(Ordering::Relaxed), 1);
+    assert_eq!(telemetry.dropped_logs.load(Ordering::Relaxed), 0);
+    let stats = telemetry.traffic("service-a", 24).await.unwrap();
+    assert_eq!(stats["requests"], 4);
+    assert_eq!(stats["server_errors"], 1);
+    assert_eq!(stats["avg_duration_ms"], 12.5);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM access_logs")
+        .fetch_one(&telemetry.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+    telemetry.pending.lock().unwrap().sample_window =
+        Some(std::time::Instant::now() - Duration::from_secs(2));
+    telemetry.record(entry(200));
+    assert_eq!(telemetry.pending.lock().unwrap().normal.len(), 1);
+}
+
+#[tokio::test]
+async fn batch_threshold_writes_before_timer_and_shutdown_drains_remainder() {
+    let dir = tempfile::tempdir().unwrap();
+    let telemetry = Telemetry::open(dir.path(), policy(5000)).await.unwrap();
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let worker = tokio::spawn(telemetry.clone().run(shutdown.clone()));
+    // 让启动时的第一次定时刷新完成，后面的记录应靠数量阈值唤醒。
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    for _ in 0..256 {
+        telemetry.record(entry(200));
+    }
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if telemetry.traffic("service-a", 24).await.unwrap()["requests"] == 256 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    telemetry.record(entry(200));
+    shutdown.cancel();
+    worker.await.unwrap();
+    telemetry.close().await;
+    let reopened = Telemetry::open(dir.path(), policy(5000)).await.unwrap();
+    assert_eq!(
+        reopened.traffic("service-a", 24).await.unwrap()["requests"],
+        257
     );
 }
 

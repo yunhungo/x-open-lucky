@@ -151,6 +151,8 @@ test('access analytics, service details, filtering and compact responsive layout
   expect(mobileRequest && mobileRequest.x >= 0 && mobileRequest.x + mobileRequest.width <= 390).toBe(true);
   await page.screenshot({ path: '../.myself/qa/access-logs-mobile.png', fullPage: false });
   await page.locator('.telemetry-status summary').click();
+  await expect(page.getByText('成功明细采集上限', { exact: true })).toBeVisible();
+  await expect(page.getByText('每秒 200 条', { exact: true })).toBeVisible();
   const policyBounds = await page.locator('.telemetry-status dl').boundingBox();
   expect(policyBounds && policyBounds.x >= 0 && policyBounds.x + policyBounds.width <= 390).toBe(true);
   await page.screenshot({ path: '../.myself/qa/access-policy-mobile.png', fullPage: false });

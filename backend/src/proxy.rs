@@ -1,7 +1,7 @@
 // @created 2026-10-11
 // @description 运行流式反向代理、WebSocket 隧道与动态 SNI 证书解析。
 // @author yunhungo
-use crate::telemetry::{Access, Telemetry};
+use crate::telemetry::{observation::Observation, Telemetry};
 use crate::{
     models::{Certificate, WebRule},
     AppState,
@@ -69,7 +69,7 @@ impl ResolvesServerCert for ScopedResolver {
             .map(|cert| cert.key.clone())
     }
 }
-pub fn client(version: &str, connect_timeout: u64) -> ProxyClient {
+pub fn client(version: &str, connect_timeout: u64, idle_per_host: usize) -> ProxyClient {
     let mut http = HttpConnector::new();
     http.enforce_http(false);
     http.set_connect_timeout(Some(Duration::from_secs(connect_timeout)));
@@ -83,7 +83,7 @@ pub fn client(version: &str, connect_timeout: u64) -> ProxyClient {
     };
     Client::builder(TokioExecutor::new())
         .http2_only(version == "http2")
-        .pool_max_idle_per_host(64)
+        .pool_max_idle_per_host(idle_per_host)
         .pool_idle_timeout(Duration::from_secs(60))
         .build(connector)
 }
@@ -143,7 +143,13 @@ pub async fn refresh(state: &AppState) -> Result<()> {
     for (version, timeout) in client_keys {
         clients
             .entry((version.clone(), timeout))
-            .or_insert_with(|| client(&version, timeout));
+            .or_insert_with(|| {
+                client(
+                    &version,
+                    timeout,
+                    state.config.gateway_limits.upstream_idle_per_host,
+                )
+            });
     }
     let routes = rules
         .into_iter()
@@ -154,7 +160,11 @@ pub async fn refresh(state: &AppState) -> Result<()> {
                     rule.options.connect_timeout,
                 ))
                 .or_insert_with(|| {
-                    client(&rule.options.upstream_version, rule.options.connect_timeout)
+                    client(
+                        &rule.options.upstream_version,
+                        rule.options.connect_timeout,
+                        state.config.gateway_limits.upstream_idle_per_host,
+                    )
                 })
                 .clone();
             let target = url::Url::parse(&rule.target)?;
@@ -230,19 +240,19 @@ pub async fn forward(
     request: Request,
 ) -> Response {
     let started = std::time::Instant::now();
-    let mut entry = Access {
+    let mut entry = Observation {
         time: chrono::Utc::now().timestamp(),
         request_id: uuid::Uuid::new_v4().to_string(),
         service_id: String::new(),
         host: String::new(),
         listener: ingress.listener.clone(),
-        client_ip: peer.ip().to_string(),
-        method: Telemetry::bounded(request.method().as_str(), 16),
+        client_ip: peer.ip(),
+        method: request.method().clone(),
         path: Telemetry::bounded(request.uri().path(), 512),
         status: 0,
         duration_ms: 0.0,
         error: String::new(),
-        phase: "request".into(),
+        phase: "request",
         tls: ingress.tls,
     };
     let mut response = forward_inner(&state, peer, ingress, request, &mut entry).await;
@@ -262,15 +272,14 @@ pub async fn forward(
     if let Ok(id) = HeaderValue::from_str(&entry.request_id) {
         response.headers_mut().insert("x-openlucky-request-id", id);
     }
-    state.telemetry.record(entry.clone());
+    entry.record(&state.telemetry);
     let telemetry = state.telemetry.clone();
     response.map(|body| {
         Body::new(body.map_err(move |error| {
-            let mut failure = entry.clone();
-            failure.time = chrono::Utc::now().timestamp();
-            failure.phase = "stream".into();
-            failure.error = "响应流中断".into();
-            telemetry.record(failure);
+            entry.time = chrono::Utc::now().timestamp();
+            entry.phase = "stream";
+            entry.error = "响应流中断".into();
+            entry.record(&telemetry);
             error
         }))
     })
@@ -280,7 +289,7 @@ async fn forward_inner(
     peer: SocketAddr,
     ingress: crate::listeners::Ingress,
     mut request: Request,
-    entry: &mut Access,
+    entry: &mut Observation,
 ) -> Response {
     let tls = ingress.tls;
     if request
@@ -485,9 +494,9 @@ async fn forward_inner(
                 };
                 if failed {
                     failure.time = chrono::Utc::now().timestamp();
-                    failure.phase = "tunnel".into();
+                    failure.phase = "tunnel";
                     failure.error = "升级隧道中断".into();
-                    telemetry.record(failure);
+                    failure.record(&telemetry);
                 }
             });
         }

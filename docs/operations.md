@@ -16,6 +16,17 @@
 | `OPENLUCKY_LEGO_BIN` | `lego` | ACME 可执行文件 |
 | `OPENLUCKY_ACCESS_DAYS` | `7` | 访问明细保留 1–30 天 |
 | `OPENLUCKY_ACCESS_ROWS` | `20000` | 访问明细上限 1,000–100,000 条，数据库仍限制 64 MiB |
+| `OPENLUCKY_ACCESS_SUCCESS_RATE` | `200` | 每秒成功明细采集上限 1–10,000；不限制请求、不采样聚合统计 |
+| `OPENLUCKY_UPSTREAM_IDLE_PER_HOST` | `256` | 每目标空闲上游连接上限 1–1,024，60 秒回收；应覆盖典型并发，避免连接反复重建 |
+| `OPENLUCKY_H3_CONNECTIONS` | `64` | 全局 QUIC 连接上限 1–4,096 |
+| `OPENLUCKY_H3_REQUESTS` | `256` | 全局活跃 HTTP/3 请求上限 1–8,192 |
+| `OPENLUCKY_H3_STREAMS` | `32` | 每连接双向流上限 1–256 |
+| `OPENLUCKY_H3_STREAM_WINDOW_KIB` | `1024` | 每流接收窗口，64–65,536 KiB |
+| `OPENLUCKY_H3_RECEIVE_WINDOW_KIB` | `1024` | 每连接接收窗口，64–65,536 KiB，不小于每流窗口 |
+| `OPENLUCKY_H3_SEND_WINDOW_KIB` | `2048` | 每连接发送窗口，64–65,536 KiB |
+| `OPENLUCKY_H3_WINDOW_BUDGET_MIB` | `192` | 所有连接的收发数据窗口预算，1–4,096 MiB |
+| `OPENLUCKY_MEMORY_LIMIT` | `384m` | Compose 容器内存上限 |
+| `OPENLUCKY_CPU_LIMIT` | `1.5` | Compose CPU 配额；修改前检查宿主余量和节流指标 |
 | `RUST_LOG` | `openlucky=info,tower_http=warn` | 标准输出结构化日志级别 |
 
 QNAP 自定义参数保存在 `/share/Container/openlucky/runtime.env`。该文件只允许管理员维护，更新不会覆盖；健康检查使用实际管理监听地址。
@@ -49,6 +60,14 @@ OPENLUCKY_LISTENERS='[{"id":"public","addr":"[::]:41003","https_port":41003,"mix
 Web 规则的 `listener` 指定入口；升级前规则迁移为 `default`。公私入口不共享路由或 SNI 证书。`mixed` 为同一端口上的明文请求提供规则配置的 HTTPS 跳转。修改监听环境后重启容器；规则和证书更新自动热加载。DDNS 支持 `*.s.example.com`；公网 IP 的 `source_value` 可填多个空白分隔的查询 URL，依次回退，单接口超时 8 秒、响应上限 4 KiB。留空使用内置 ipify，更新周期支持 10–86400 秒。
 
 访问明细与小时统计存储在 `/data/telemetry.sqlite`，与配置数据库隔离；默认批量延迟最多约 5 秒。系统事件、访问队列、明细、统计与控制台均设置上限。概览的采集异常提示及日志页的采集状态用于识别丢失。完整保留策略、统计口径和磁盘边界见 [访问与性能观测](observability.md)。
+
+## NAS 性能档位
+
+默认继续使用 1.5 核 / 384 MiB，给 NAS 其他应用保留资源。QUIC 数据窗口预算为 64 × (1 + 2) = 192 MiB；这不是进程内存上限，剩余空间供协议状态、HTTP/1/2、TLS、连接池及其他任务使用。容量参数非法或组合超过预算会在打开数据库前拒绝启动。
+
+对于已确认有 CPU/内存余量、需要更高公网单连接吞吐的 NAS，可在独立压测通过后采用以下起点：`OPENLUCKY_H3_SEND_WINDOW_KIB=8192`、`OPENLUCKY_H3_RECEIVE_WINDOW_KIB=8192`、`OPENLUCKY_H3_STREAM_WINDOW_KIB=8192`、`OPENLUCKY_H3_CONNECTIONS=64`、`OPENLUCKY_H3_WINDOW_BUDGET_MIB=1024`、`OPENLUCKY_MEMORY_LIMIT=1536m`。该组合数据窗口预算为 1 GiB，至少还应留出 512 MiB 供其余工作；不是任意流量下的内存保证。并发扩容需要按相同公式重算预算，不能单独放开连接数。
+
+先在默认 CPU 配额下观察 cgroup 的 `nr_throttled` / `throttled_usec`（旧 cgroup 为 `throttled_time`）、CPU 和 P99。仅在确认持续节流且宿主有空余时提高 `OPENLUCKY_CPU_LIMIT`，不要移除上限。所有参数仅影响 OpenLucky 容器。
 
 ## HTTP/3
 

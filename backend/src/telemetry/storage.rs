@@ -5,7 +5,7 @@ use super::*;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
 pub(super) async fn open(root: &Path, policy: &Policy) -> Result<SqlitePool> {
-    // DELETE journal 避免读者阻止 WAL 回收；批量事务每五秒一次且与配置数据库隔离。
+    // DELETE journal 避免读者阻止 WAL 回收；有界批量事务与配置数据库隔离。
     let options = SqliteConnectOptions::new()
         .filename(root.join("telemetry.sqlite"))
         .create_if_missing(true)
@@ -36,13 +36,28 @@ impl Telemetry {
     }
     pub(super) async fn flush(&self) -> Result<()> {
         // 先清理再取队列，清理失败时内存仍受环形队列上限约束。
-        if let Err(error) = self.prune().await {
-            self.write_failures.fetch_add(1, Ordering::Relaxed);
-            return Err(error);
+        let now = chrono::Utc::now().timestamp() as u64;
+        if now.saturating_sub(self.last_prune.load(Ordering::Relaxed)) >= 60 {
+            if let Err(error) = self.prune().await {
+                self.write_failures.fetch_add(1, Ordering::Relaxed);
+                return Err(error);
+            }
+            self.last_prune.store(now, Ordering::Relaxed);
         }
-        let pending = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|e| e.into_inner()));
+        let pending = {
+            let mut collector = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            Pending {
+                normal: std::mem::take(&mut collector.normal),
+                errors: std::mem::take(&mut collector.errors),
+                buckets: std::mem::take(&mut collector.buckets),
+                ..Pending::default()
+            }
+        };
         let log_count = pending.normal.len() + pending.errors.len();
         let bucket_count = pending.buckets.len();
+        if log_count == 0 && bucket_count == 0 {
+            return Ok(());
+        }
         let result = self.persist(pending).await;
         if result.is_err() {
             self.dropped_logs
@@ -67,17 +82,23 @@ impl Telemetry {
         }
         let mut entries: Vec<_> = pending.normal.into_iter().chain(pending.errors).collect();
         entries.sort_by_key(|e| e.time);
-        for entry in entries {
-            sqlx::query(
-                "INSERT INTO access_logs(time,service_id,status,failed,entry) VALUES(?,?,?,?,?)",
-            )
-            .bind(entry.time)
-            .bind(&entry.service_id)
-            .bind(entry.status)
-            .bind(entry.failure())
-            .bind(serde_json::to_string(&entry)?)
-            .execute(&mut *tx)
-            .await?;
+        // 每批 640 个绑定参数，兼容 SQLite 的保守参数上限，减少线程间往返。
+        for chunk in entries.chunks(128) {
+            let encoded = chunk
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                "INSERT INTO access_logs(time,service_id,status,failed,entry) ",
+            );
+            query.push_values(chunk.iter().zip(&encoded), |mut row, (entry, json)| {
+                row.push_bind(entry.time)
+                    .push_bind(&entry.service_id)
+                    .push_bind(entry.status)
+                    .push_bind(entry.failure())
+                    .push_bind(json);
+            });
+            query.build().execute(&mut *tx).await?;
         }
         // 限制提交后的行数，包含当次批次；高峰不出现无限增长窗口。
         sqlx::query("DELETE FROM access_logs WHERE id < COALESCE((SELECT id FROM access_logs ORDER BY id DESC LIMIT 1 OFFSET ?),0)")

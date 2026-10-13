@@ -27,12 +27,13 @@ pub fn endpoint(state: &AppState, listener: &Listener) -> anyhow::Result<quinn::
     let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
     let mut transport = quinn::TransportConfig::default();
+    let limits = &state.config.gateway_limits;
     transport
-        .max_concurrent_bidi_streams(32u32.into())
+        .max_concurrent_bidi_streams(limits.streams.into())
         .max_concurrent_uni_streams(8u32.into())
-        .stream_receive_window((128 * 1024u32).into())
-        .receive_window((512 * 1024u32).into())
-        .send_window(512 * 1024)
+        .stream_receive_window(limits.stream_window.into())
+        .receive_window(limits.receive_window.into())
+        .send_window(limits.send_window)
         .max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
     config.transport_config(Arc::new(transport));
     let socket = socket2::Socket::new(

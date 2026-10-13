@@ -125,6 +125,7 @@ pub async fn health(State(state): State<AppState>) -> Result<Json<Value>, ApiErr
         "policy":telemetry.policy,"rows":rows,"database_bytes":pages*4096,
         "pending":pending.normal.len()+pending.errors.len(),
         "dropped_logs":telemetry.dropped_logs.load(Ordering::Relaxed),
+        "sampled_logs":telemetry.sampled_logs.load(Ordering::Relaxed),
         "dropped_buckets":telemetry.dropped_buckets.load(Ordering::Relaxed),
         "write_failures":telemetry.write_failures.load(Ordering::Relaxed),
         "last_flush":telemetry.last_flush.load(Ordering::Relaxed),

@@ -25,6 +25,8 @@ struct Options {
     requests: usize,
     #[serde(default = "one")]
     concurrency: usize,
+    #[serde(default)]
+    duration_secs: u64,
 }
 fn path() -> String {
     "/".into()
@@ -37,7 +39,8 @@ async fn main() -> Result<()> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
     let options: Options = serde_json::from_str(&input)?;
-    tokio::time::timeout(Duration::from_secs(60), run(options)).await??;
+    let timeout = Duration::from_secs(options.duration_secs.min(120) + 60);
+    tokio::time::timeout(timeout, run(options)).await??;
     Ok(())
 }
 async fn run(options: Options) -> Result<()> {
@@ -45,7 +48,9 @@ async fn run(options: Options) -> Result<()> {
         .install_default()
         .ok();
     anyhow::ensure!(
-        (1..=32).contains(&options.concurrency) && options.requests > 0,
+        (1..=256).contains(&options.concurrency)
+            && (1..=10_000_000).contains(&options.requests)
+            && options.duration_secs <= 120,
         "Invalid workload"
     );
     let mut roots =
@@ -83,7 +88,15 @@ async fn run(options: Options) -> Result<()> {
     let mut latencies = Vec::with_capacity(options.requests);
     let mut failures = 0;
     let mut sample = None;
-    for index in 0..options.requests {
+    let mut index = 0;
+    let limit = if options.duration_secs > 0 {
+        10_000_000
+    } else {
+        options.requests
+    };
+    while index < limit
+        && (options.duration_secs == 0 || start.elapsed().as_secs() < options.duration_secs)
+    {
         let mut sender = sender.clone();
         let uri = format!(
             "https://{}:{}{}",
@@ -120,8 +133,10 @@ async fn run(options: Options) -> Result<()> {
             while let Some(mut chunk) = stream.recv_data().await.context("receive body")? {
                 let chunk = chunk.copy_to_bytes(chunk.remaining());
                 bytes += chunk.len();
-                digest.update(&chunk);
-                if prefix.len() < 8192 { prefix.extend_from_slice(&chunk[..chunk.len().min(8192 - prefix.len())]); }
+                if index == 0 {
+                    digest.update(&chunk);
+                    if prefix.len() < 8192 { prefix.extend_from_slice(&chunk[..chunk.len().min(8192 - prefix.len())]); }
+                }
             }
             let _ = stream.recv_trailers().await.context("receive trailers")?;
             let headers = response.headers().iter().map(|(name, value)| (name.to_string(), value.to_str().unwrap_or_default().to_owned())).collect::<std::collections::BTreeMap<_, _>>();
@@ -129,8 +144,9 @@ async fn run(options: Options) -> Result<()> {
             let sample = (index == 0).then(|| serde_json::json!({"status":response.status().as_u16(),"headers":headers,"bytes":bytes,"body":String::from_utf8_lossy(&prefix),"sha256":hex::encode(digest.finalize()),"duration_ms":ms}));
             Ok::<_, anyhow::Error>((ms, !response.status().is_success(), sample))
         });
-        if tasks.len() >= options.concurrency || index + 1 == options.requests {
-            while let Some(result) = tasks.join_next().await {
+        index += 1;
+        if tasks.len() >= options.concurrency {
+            if let Some(result) = tasks.join_next().await {
                 let (ms, failed, response) =
                     result?.with_context(|| format!("request batch ending at {}", index + 1))?;
                 latencies.push(ms);
@@ -141,11 +157,19 @@ async fn run(options: Options) -> Result<()> {
             }
         }
     }
+    while let Some(result) = tasks.join_next().await {
+        let (ms, failed, response) = result??;
+        latencies.push(ms);
+        failures += usize::from(failed);
+        if response.is_some() {
+            sample = response;
+        }
+    }
     let elapsed = start.elapsed().as_secs_f64();
     latencies.sort_by(f64::total_cmp);
     println!(
         "{}",
-        serde_json::json!({"protocol":"HTTP/3","requests":latencies.len(),"failures":failures,"seconds":elapsed,"rps":latencies.len() as f64/elapsed,"p95_ms":latencies[(latencies.len()*95/100).min(latencies.len()-1)],"response":sample.context("No response")?})
+        serde_json::json!({"protocol":"HTTP/3","requests":latencies.len(),"failures":failures,"seconds":elapsed,"rps":latencies.len() as f64/elapsed,"p95_ms":latencies[(latencies.len()*95/100).min(latencies.len()-1)],"p99_ms":latencies[(latencies.len()*99/100).min(latencies.len()-1)],"p999_ms":latencies[(latencies.len()*999/1000).min(latencies.len()-1)],"response":sample.context("No response")?})
     );
     connection.close(0u32.into(), b"done");
     drive.abort();

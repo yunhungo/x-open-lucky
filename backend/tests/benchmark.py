@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 from smoke import free_port
+from quic_latency import QuicLatency
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -26,7 +27,7 @@ def sample(pid):
     return int(row[0]), seconds
 
 
-def run(binary, name, upstream, rounds, requests):
+def run(binary, name, upstream, rounds, requests, duration, concurrency, baseline_http3, quic_rtt_ms, large_only):
     ports = [free_port() for _ in range(3)]
     with tempfile.TemporaryDirectory(prefix='openlucky-bench-') as folder:
         root = Path(folder)
@@ -61,21 +62,35 @@ def run(binary, name, upstream, rounds, requests):
                 current = next(v for v in api('GET', '/resources/web') if v['id'] == wid)
                 options = {**current.get('options', {}), 'http3': True, 'request_headers': {'X-Host': '{{ request.host }}', 'X-Origin': '{{ request.scheme | upper }}', 'X-Client': '{{ client.ip }}'} if dynamic else {}, 'response_headers': {'X-Status': '{{ response.status }}'} if dynamic else {}}
                 api('PUT', '/resources/web/' + wid, {**current, 'options': options})
-            if name == 'candidate': configure(False)
-            def load(protocol, count, path='/bench', concurrency=32):
+            modern = name == 'candidate' or baseline_http3
+            if modern: configure(False)
+            expected_requests = 0
+            def load(protocol, count, path='/bench', parallel=concurrency, seconds=0):
+                nonlocal expected_requests
                 h3 = protocol == 'http3'
-                options = {'address': f'127.0.0.1:{ports[1] if protocol == "http1" else ports[2]}', 'requests': count, 'concurrency': concurrency, 'path': path}
+                options = {'address': f'127.0.0.1:{ports[1] if protocol == "http1" else ports[2]}', 'requests': count, 'concurrency': parallel, 'path': path, 'duration_secs': seconds}
                 if h3: options.update(server_name='bench.example.test', ca=str(root / 'cert.pem'))
                 else: options.update(domain='bench.example.test', version=protocol, ca=None if protocol == 'http1' else str(root / 'cert.pem'))
                 binary_name = 'h3_probe' if h3 else 'proxy_load'
-                result = subprocess.run([str(ROOT / 'target/release/examples' / binary_name)], input=json.dumps(options), text=True, capture_output=True, timeout=90)
+                relay = QuicLatency(ports[2], quic_rtt_ms) if h3 and quic_rtt_ms else None
+                if relay:
+                    options['address'] = f'127.0.0.1:{relay.port}'
+                try:
+                    result = subprocess.run([str(ROOT / 'target/release/examples' / binary_name)], input=json.dumps(options), text=True, capture_output=True, timeout=seconds + 90)
+                finally:
+                    if relay: relay.close()
                 assert result.returncode == 0, result.stderr + '\n' + (root / 'server.log').read_text()[-8000:]
                 value = json.loads(result.stdout)
-                assert value['failures'] == 0, value
+                assert value['failures'] == 0, (value, api('GET', '/access-logs?errors=true&limit=3'))
+                expected_requests += value['requests']
                 value.pop('response', None)
+                if relay:
+                    value.update(simulated_rtt_ms=quic_rtt_ms, relay_drops=relay.dropped)
+                    assert relay.dropped == 0, value
                 return value
             results = []
-            for protocol in ['http1', 'http2'] + (['http3'] if name == 'candidate' else []):
+            for protocol in ['http1', 'http2'] + (['http3'] if modern else []):
+                if large_only: continue
                 load(protocol, 1000)
                 for iteration in range(rounds):
                     stop = threading.Event(); rss = []
@@ -83,18 +98,19 @@ def run(binary, name, upstream, rounds, requests):
                     def monitor():
                         while not stop.wait(.1): rss.append(sample(process.pid)[0])
                     monitor_thread = threading.Thread(target=monitor); monitor_thread.start()
-                    try: value = load(protocol, requests)
+                    try: value = load(protocol, requests, seconds=duration)
                     finally: stop.set(); monitor_thread.join()
                     after = sample(process.pid)
                     value.update(protocol=protocol, round=iteration + 1, peak_rss_mib=max([before[0], after[0], *rss])/1024, cpu_seconds=round(after[1]-before[1], 3))
                     results.append(value)
                     print(json.dumps({'build': name, **value}), flush=True)
-            if name == 'candidate':
-                configure(True)
-                for iteration in range(rounds):
-                    value = load('http1', requests)
-                    value.update(protocol='http1_templates', round=iteration + 1)
-                    results.append(value); print(json.dumps({'build': name, **value}), flush=True)
+            if modern:
+                if not large_only:
+                    configure(True)
+                    for iteration in range(rounds):
+                        value = load('http1', requests, seconds=duration)
+                        value.update(protocol='http1_templates', round=iteration + 1)
+                        results.append(value); print(json.dumps({'build': name, **value}), flush=True)
                 configure(False)
                 for protocol in ['http1', 'http3']:
                     before = sample(process.pid); rss = []; stop = threading.Event()
@@ -107,7 +123,12 @@ def run(binary, name, upstream, rounds, requests):
                     after = sample(process.pid)
                     value.update(protocol=protocol + '_16MiB', peak_rss_mib=max([before[0], after[0], *rss])/1024, after_rss_mib=after[0]/1024)
                     results.append(value); print(json.dumps({'build': name, **value}), flush=True)
-            return {'build': name, 'binary': str(binary), 'route_count': 42, 'results': results, 'telemetry': api('GET', '/telemetry')}
+            for _ in range(120):
+                traffic = api('GET', '/traffic')
+                if traffic['requests'] == expected_requests: break
+                time.sleep(.1)
+            assert traffic['requests'] == expected_requests, (traffic['requests'], expected_requests)
+            return {'build': name, 'binary': str(binary), 'route_count': 42, 'results': results, 'counted_requests': traffic['requests'], 'telemetry': api('GET', '/telemetry')}
         finally:
             process.terminate()
             try: process.wait(timeout=40)
@@ -122,8 +143,15 @@ def main():
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--requests', type=int, default=30000)
     parser.add_argument('--candidate-only', action='store_true')
+    parser.add_argument('--duration', type=int, default=0, help='每轮持续秒数（1–120），0 使用请求数')
+    parser.add_argument('--concurrency', type=int, default=32)
+    parser.add_argument('--baseline-http3', action='store_true', help='基线也支持 HTTP/3 与动态头时进行相同场景对照')
+    parser.add_argument('--quic-rtt-ms', type=int, default=0, help='通过有界 UDP 回环中继模拟 QUIC RTT（0–100 ms）')
+    parser.add_argument('--large-only', action='store_true', help='只运行大文件对照')
     parser.add_argument('--output', type=Path, default=ROOT / '.myself/qa/web-performance.json')
     args = parser.parse_args()
+    if not 0 <= args.duration <= 120 or not 1 <= args.concurrency <= 256 or args.rounds < 1 or not 0 <= args.quic_rtt_ms <= 100:
+        parser.error('Invalid duration, concurrency or rounds')
     upstream_port = free_port()
     upstream = subprocess.Popen([str(ROOT / 'target/release/examples/protocol_upstream'), f'127.0.0.1:{upstream_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -131,7 +159,7 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         builds = [] if args.candidate_only else [(args.baseline.resolve(), 'baseline')]
         for binary, name in builds + [(args.candidate.resolve(), 'candidate')]:
-            output.append(run(binary, name, upstream_port, args.rounds, args.requests))
+            output.append(run(binary, name, upstream_port, args.rounds, args.requests, args.duration, args.concurrency, args.baseline_http3, args.quic_rtt_ms, args.large_only))
             args.output.write_text(json.dumps(output, indent=2))
         for build in output:
             for protocol in dict.fromkeys(v['protocol'] for v in build['results']):
