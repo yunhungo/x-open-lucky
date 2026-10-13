@@ -18,6 +18,7 @@ import { dateTime, uptime } from '@/lib/contracts';
 import { QueryState } from '@/components/QueryState/QueryState';
 import { PerformancePanel } from '@/components/PerformancePanel/PerformancePanel';
 import { TrafficPanel } from '@/components/TrafficPanel/TrafficPanel';
+import { GroupSummary } from '@/components/GroupSummary/GroupSummary';
 import { CollectionNotice } from './CollectionNotice';
 import './OverviewPage.scss';
 export function OverviewPage() {
@@ -88,6 +89,7 @@ export function OverviewPage() {
       <PerformancePanel data={data.performance} />
       <CollectionNotice />
       <TrafficPanel />
+      <GroupSummary />
       <div className='overview-detail'>
         <section className='panel'>
           <div className='panel-heading'>

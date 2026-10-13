@@ -25,6 +25,7 @@ RELEASE="$ROOT/releases/$SHA"
 COMPOSE="$RELEASE/deploy/compose.yml"
 CURRENT="$ROOT/current"
 OLD_RELEASE=$(readlink "$CURRENT" 2>/dev/null || true)
+OLD_ADMIN_ADDR=$($DOCKER inspect openlucky --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^OPENLUCKY_ADMIN_ADDR=//p' || true)
 OLD_IMAGE=$($DOCKER inspect openlucky --format '{{.Config.Image}}' 2>/dev/null || true)
 OLD_SHA=$($DOCKER image inspect "$OLD_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)
 REVISION=$($DOCKER image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
@@ -41,7 +42,9 @@ if [ -f "$ROOT/runtime.env" ]; then
   set +a
 fi
 export OPENLUCKY_IMAGE="$IMAGE" OPENLUCKY_ROOT="$ROOT"
-HOST=${OPENLUCKY_ADMIN_ADDR:-127.0.0.1:56002}
+HOST=${OPENLUCKY_ADMIN_ADDR:-${OLD_ADMIN_ADDR:-127.0.0.1:24050}}
+# 保留运行配置或现有容器地址；首次 NAS 部署使用规划后的管理端口。
+export OPENLUCKY_ADMIN_ADDR="$HOST"
 compose() { $DOCKER compose -p openlucky -f "$COMPOSE" "$@"; }
 rollback() {
   trap - EXIT
@@ -80,7 +83,6 @@ if [ -n "$OLD_IMAGE" ]; then
 fi
 ROLLBACK_NEEDED=1
 if ! compose up -d --no-deps app; then rollback; fi
-HOST=${OPENLUCKY_ADMIN_ADDR:-127.0.0.1:56002}
 READY=0
 for attempt in $(seq 1 40); do
   RESPONSE=$($DOCKER exec openlucky curl --fail --silent --max-time 5 "http://$HOST/healthz" 2>/dev/null || true)

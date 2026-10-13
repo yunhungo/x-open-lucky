@@ -1,0 +1,40 @@
+/**
+ * @created 2026-10-13
+ * @description 呈现可横向滚动的紧凑分组统计表。
+ * @author yunhungo
+ */
+.group-summary {
+  margin-bottom: 22px;
+  overflow: hidden;
+  .panel-heading > span {
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 400;
+  }
+  table {
+    width: 100%;
+    min-width: 640px;
+    text-align: right;
+    font-size: 12px;
+  }
+  th {
+    font-weight: 400;
+    color: var(--muted-foreground);
+    font-size: 11px;
+  }
+  th,
+  td {
+    padding: 13px 20px;
+    border-top: 1px solid var(--border);
+  }
+  th:first-child,
+  td:first-child {
+    text-align: left;
+  }
+  a {
+    color: var(--primary);
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+}

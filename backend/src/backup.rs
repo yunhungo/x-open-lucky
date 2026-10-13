@@ -21,6 +21,8 @@ use std::collections::{BTreeMap, HashSet};
 #[derive(Serialize, Deserialize)]
 struct Bundle {
     version: u8,
+    #[serde(default)]
+    groups: Option<Vec<crate::groups::Group>>,
     resources: BTreeMap<String, Vec<Value>>,
     certificates: BTreeMap<String, Pem>,
 }
@@ -62,7 +64,8 @@ pub async fn export(
         return Err(ApiError::bad("请等待任务结束后备份"));
     }
     let mut bundle = Bundle {
-        version: 1,
+        version: 2,
+        groups: Some(crate::groups::read(&state.store.pool).await?),
         resources: BTreeMap::new(),
         certificates: BTreeMap::new(),
     };
@@ -153,7 +156,9 @@ pub async fn restore(
         .map_err(|_| ApiError::bad("备份密码错误或文件损坏"))?;
     let bundle: Bundle =
         serde_json::from_slice(&decrypted).map_err(|_| ApiError::bad("备份内容无效"))?;
-    if bundle.version != 1
+    if ![1, 2].contains(&bundle.version)
+        || (bundle.version == 2 && bundle.groups.is_none())
+        || (bundle.version == 1 && bundle.groups.is_some())
         || bundle.resources.values().map(Vec::len).sum::<usize>() > 1000
         || bundle.resources.len() != 4
         || ["credentials", "ddns", "web", "certificates"]
@@ -167,6 +172,10 @@ pub async fn restore(
         return Err(ApiError::bad("请等待所有任务结束后恢复"));
     }
     let mut ids = BTreeMap::new();
+    let restored_groups = bundle
+        .groups
+        .map(crate::groups::backup::prepare)
+        .transpose()?;
     let mut validated = BTreeMap::new();
     for (kind, items) in bundle.resources {
         let mut output = Vec::new();
@@ -184,6 +193,13 @@ pub async fn restore(
     }
     for items in validated.values_mut() {
         for (_, item) in items {
+            if let Some(old) = item["group_id"].as_str().filter(|s| !s.is_empty()) {
+                let mapped = restored_groups
+                    .as_ref()
+                    .and_then(|(_, ids)| ids.get(old))
+                    .ok_or_else(|| ApiError::bad("备份中的服务分组关联缺失"))?;
+                item["group_id"] = json!(mapped);
+            }
             for field in ["credential_id", "certificate_id"] {
                 if let Some(old) = item[field].as_str().filter(|s| !s.is_empty()) {
                     item[field] = json!(ids.get(old).context("备份资源关联缺失")?);
@@ -290,6 +306,19 @@ pub async fn restore(
         }
     }
     let mut tx = state.store.pool.begin().await?;
+    if let Some((groups, _)) = restored_groups {
+        sqlx::query("DELETE FROM service_groups")
+            .execute(&mut *tx)
+            .await?;
+        for group in groups {
+            sqlx::query("INSERT INTO service_groups(id,name,position) VALUES(?,?,?)")
+                .bind(group.id)
+                .bind(group.name)
+                .bind(group.position)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     sqlx::query("DELETE FROM resources")
         .execute(&mut *tx)
         .await?;

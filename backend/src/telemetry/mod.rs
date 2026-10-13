@@ -2,6 +2,7 @@
 // @description 在有界内存中收集访问明细与独立流量聚合并异步落盘。
 // @author yunhungo
 pub mod api;
+mod group_stats;
 mod metrics;
 pub mod observation;
 mod storage;

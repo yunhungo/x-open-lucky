@@ -4,6 +4,8 @@
  * @author yunhungo
  */
 import { useState } from 'react';
+import { useGroups } from '@/lib/groups-api';
+import { groupLabel, UNASSIGNED } from '@/lib/groups';
 import { Button } from '@/components/ui/button';
 import { Sheet } from '@/components/ui/sheet';
 import { ResourceEditor } from '@/components/ResourceEditor/ResourceEditor';
@@ -19,6 +21,7 @@ export function ServiceDetailPage() {
   const { id } = useParams();
   const [editing, setEditing] = useState(false);
   const resources = useResources('web');
+  const groups = useGroups();
   if (!resources.data || resources.isError)
     return (
       <QueryState
@@ -55,6 +58,21 @@ export function ServiceDetailPage() {
       </div>
       <section className='panel service-detail__config' aria-label='服务配置'>
         <dl>
+          <div>
+            <dt>分组</dt>
+            <dd>
+              <Link
+                className='text-primary hover:underline'
+                to={`/web?group=${encodeURIComponent(service.group_id || UNASSIGNED)}`}
+              >
+                {groups.isPending
+                  ? '加载中…'
+                  : groups.isError
+                    ? '分组加载失败'
+                    : groupLabel(groups.data ?? [], service.group_id)}
+              </Link>
+            </dd>
+          </div>
           <div>
             <dt>域名</dt>
             <dd>{service.domain}</dd>

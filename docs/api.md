@@ -19,8 +19,15 @@
 | DELETE | `/resources/{kind}/{id}` | 删除未被其他资源引用的配置 |
 | POST | `/resources/{kind}/{id}/run` | DDNS 或 ACME 任务；202 表示已入队 |
 | POST | `/certificates/{id}/import` | `cert_pem`、`key_pem`，验证后原子激活 |
-| GET | `/access-logs?service_id=&errors=false&status=&since=&until=&before=&limit=50&q=` | 访问明细游标分页，返回 `items / next_cursor`；每页 1–200 条 |
-| GET | `/traffic?service_id=&hours=24` | 当前及此前小时聚合，`hours` 为 24 / 168 / 720，空服务 ID 返回全站总量 |
+| GET | `/groups` | 有序分组列表：`id / name / position / revision` |
+| POST | `/groups` | `{name}` 创建分组，返回 ID |
+| PUT | `/groups/{id}` | `{name, revision}` 重命名 |
+| DELETE | `/groups/{id}` | `{revision}` 删除分组，成员原子转为未分组 |
+| PUT | `/groups/order` | `{groups:[{id,revision}]}` 提交完整顺序 |
+| PUT | `/groups/assign` | `{group_id,services:[{id,revision}]}` 批量归组 |
+| GET | `/group-stats?hours=24` | 一次返回全部组与未分组的状态、请求、错误和加权耗时 |
+| GET | `/access-logs?group_id=&service_id=&errors=false&status=&since=&until=&before=&limit=50&q=` | 访问明细游标分页，返回 `items / next_cursor`；每页 1–200 条 |
+| GET | `/traffic?group_id=&service_id=&hours=24` | 当前及此前小时聚合，`hours` 为 24 / 168 / 720，未指定分组及服务时返回全站总量 |
 | GET | `/telemetry` | 明细保留策略、容量、队列、最近写入与本次运行丢失计数 |
 | GET | `/logs?level=&module=` | 最近 300 条事件；最多保留 2000 条 |
 | POST | `/backup/export` | `password`，返回加密 `backup` 文件文本 |
@@ -41,3 +48,15 @@
 头配置在 API 中为名称到字符串/null 的映射：字符串设置（含 MiniJinja 动态模板），null 删除。每组最多 32 项、总原始值最多 32 KiB；运行时每值最多 8 KiB、每组最多 32 KiB。模板语法和上下文在保存时验证；运行时缺失变量、非法字符或超限返回 502，并记录不含模板值的错误。完整变量与限制见 [Web 配置](web-services.md)。
 
 旧配置经 `0004_web_options.sql` 补齐默认值，旧备份恢复同样应用默认值。`overview` 增加 `http3_addr`、`public_http3_port`；附加入口增加可选的 `http3_addr/http3_port`。
+
+## 服务分组
+
+`web.group_id` 默认空字符串，表示未分组。非空时必须引用已有分组；`0005_service_groups.sql` 为升级数据补齐默认值并建立初始分组。分组最多 64 个，名称去首尾空白后为 1–40 个字符，名称不区分大小写，同名、控制字符和保留名称“未分组”返回 400。
+
+排序必须包含全部当前组且每个 ID 恰好一次。批量归组每次接受 1–500 个互不重复的服务；任何服务版本过期或删除，都返回 409 并回滚整批。只改写 `group_id` 及资源 `revision`，不覆盖服务其他配置。分组删除会同时增加受影响服务的版本。不存在的组返回 404，非法参数返回 400。
+
+观测查询中省略或传空 `group_id` 表示全部；`group_id=unassigned` 表示当前未分组的服务。同时指定 `service_id` 时取交集，无成员返回空列表或零统计；不存在的组返回 404。全局未知域名及已删除服务不计入任何分组。筛选基于当前归属，移组后保留的历史随成员归属展示。
+
+`/group-stats` 的 `hours` 为 24 / 168 / 720，返回 `{since, until, groups:[...]}`；每组包含 `id/name/position/services/enabled/errors/requests/client_errors/server_errors/stream_errors/avg_duration_ms`。`errors` 为异常服务数，其他错误字段为访问计数。平均耗时按总耗时除以总请求量计算，无请求返回 null。前端合同在 `lib/groups.ts`，统计不包含臆测的每组 CPU 或内存。
+
+备份外层加密格式保持 `openlucky-backup-v1`，解密后的内容升级为 `version:2` 并包含 `groups`。恢复会重映射组和服务 ID、保留顺序及关联；内容版本 1 仍可恢复，其服务全部未分组，当前分组定义保留。

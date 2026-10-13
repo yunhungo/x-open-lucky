@@ -19,10 +19,13 @@ OpenLucky 把域名更新、HTTPS 证书和 Web 服务集中在一个面板中�
 | 服务配置 | HTTP / HTTPS 访问策略、TLS 最低版本、上游协议（含 h2c）、超时、HTTPS 跳转、Host 保留 |
 | 自定义头 | 逐行设置或删除请求头、响应头；固定文字、变量、条件与 MiniJinja 模板；保存时校验 |
 | 证书 | Let's Encrypt DNS-01 与通配符、自动续期、PEM 导入、动态 SNI、证书与私钥匹配校验 |
+| 服务分组 | 自定义名称与排序、批量归组、筛选折叠、分组访问统计和日志、概览与服务详情联动 |
 | 访问观测 | 访问与错误日志、服务详情、小时趋势、CPU / 内存采样、独立限容存储与丢弃计数 |
 | 管理与运维 | 一次性初始化、加密凭据、会话管理、配置版本校验、加密备份、SQL 迁移、发布快照与失败回滚 |
 
 HTTP/3 已实现实际 QUIC 服务端，按服务开启，需要有效证书和可达的 UDP 端口。既有配置升级后继续使用 HTTP/1.1 + HTTP/2。当前不支持原始 TCP/UDP 端口转发、HTTP/2/3 Extended CONNECT、多人 RBAC 或 OAuth。
+
+分组是管理标签：移组不会更改域名、端口、证书或上游。已有服务升级后位于“未分组”，可以勾选后批量归组；删除分组保留组内服务。分组统计按当前成员汇总历史请求，CPU / 内存仍表示整个 OpenLucky。详见 [服务分组](docs/service-groups.md)。
 
 ## Docker 快速开始
 
@@ -75,7 +78,7 @@ Linux NAS 若需要读取宿主机 IPv6、连接宿主回环服务或使用多�
 部署脚本面向已配置 SSH 密钥和 Container Station 的 QNAP，默认 SSH 别名为 `nas`。首次发布前，在 NAS 上创建 `/share/Container/openlucky/runtime.env`，填写自己的私网地址，例如：
 
 ```sh
-OPENLUCKY_ADMIN_ADDR=192.168.1.100:56002
+OPENLUCKY_ADMIN_ADDR=192.168.1.100:24050
 OPENLUCKY_HTTP_ADDR='[::]:58081'
 OPENLUCKY_HTTPS_ADDR='[::]:58444'
 OPENLUCKY_PUBLIC_HTTPS_PORT=58444
@@ -124,6 +127,7 @@ cd ..
 ## 文档与参与
 
 - [架构与模块边界](docs/architecture.md)
+- [服务分组与统计口径](docs/service-groups.md)
 - [Web 服务与动态模板](docs/web-services.md)
 - [环境变量、部署与恢复](docs/operations.md)
 - [API 合同](docs/api.md)

@@ -10,9 +10,17 @@ import { errorText } from '@/lib/api';
 import { milliseconds, number } from '@/lib/observability';
 import { TrafficChart } from './TrafficChart';
 import './TrafficPanel.scss';
-export function TrafficPanel({ serviceId = '' }: { serviceId?: string }) {
+export function TrafficPanel({
+  serviceId = '',
+  groupId = '',
+  title = '访问情况',
+}: {
+  serviceId?: string;
+  groupId?: string;
+  title?: string;
+}) {
   const [hours, setHours] = useState(24);
-  const query = useTraffic(serviceId, hours);
+  const query = useTraffic(serviceId, hours, groupId);
   const data = query.data;
   const rate =
     data && data.requests
@@ -21,12 +29,12 @@ export function TrafficPanel({ serviceId = '' }: { serviceId?: string }) {
   return (
     <section className='panel traffic-panel' aria-label='访问统计'>
       <div className='traffic-panel__heading'>
-        <h2>访问情况</h2>
+        <h2>{title}</h2>
         <div className='flex items-center gap-4'>
           {!serviceId && (
             <Link
               className='text-muted-foreground hover:text-primary'
-              to='/logs?tab=access'
+              to={`/logs?tab=access${groupId ? `&group=${encodeURIComponent(groupId)}` : ''}`}
             >
               访问日志
             </Link>

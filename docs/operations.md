@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `OPENLUCKY_DATA` | `data` | SQLite、加密密钥、初始化密钥、证书 |
 | `OPENLUCKY_FRONTEND` | `frontend/dist` | 静态前端路径 |
-| `OPENLUCKY_ADMIN_ADDR` | 本地开发 `0.0.0.0:56002`；Compose `127.0.0.1:56002` | 管理监听 |
+| `OPENLUCKY_ADMIN_ADDR` | 本地开发 `0.0.0.0:56002`；Compose `127.0.0.1:24050` | 管理监听 |
 | `OPENLUCKY_HTTP_ADDR` | `[::]:58081` | HTTP 代理监听 |
 | `OPENLUCKY_HTTPS_ADDR` | `[::]:58444` | HTTPS 代理监听 |
 | `OPENLUCKY_PUBLIC_HTTPS_PORT` | `58444` | HTTP 跳转使用的外部 HTTPS 端口 |
@@ -76,3 +76,5 @@ Web 规则的 `listener` 指定入口；升级前规则迁移为 `default`。公
 QNAP 的 UDP 443 已被其他服务占用时，保持 TCP `100.64.0.10:443`，将本项目的 `OPENLUCKY_HTTP3_ADDR=100.64.0.10:58445`、`OPENLUCKY_PUBLIC_HTTP3_PORT=58445` 写入 `runtime.env`。公网 IPv6 入口仍可用 UDP `41003`。不要停止其他应用或覆盖其绑定。
 
 `.myself/check.sh` 包含真实 HTTP/3 客户端、独立 UDP 端口、TLS/ALPN、h2c、4 MiB 上传、16 MiB 下载、动态头和旧数据迁移测试。性能对照可先编译 release 示例及主程序，再运行 `python3 backend/tests/benchmark.py --baseline /path/to/previous/openlucky --requests 200000 --rounds 3`；结果是本机回环上限，不代表 NAS 公网吞吐。macOS 若遇到 release proc-macro 的 LINKEDIT strip 错误，对两份对照构建同时使用 `CARGO_PROFILE_RELEASE_STRIP=none`。
+
+NAS 管理端口规划为 `24050`。升级优先使用 `runtime.env` 中的 `OPENLUCKY_ADMIN_ADDR`；该值缺省时继承现有 OpenLucky 容器的管理地址，首次 Compose 部署才采用 `127.0.0.1:24050`。健康检查和回滚沿用相同地址。不要删除 NAS 本地运行配置，避免丢失自定义监听入口。通用 Docker 快速开始和本地开发仍使用 `56002`。

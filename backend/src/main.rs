@@ -7,6 +7,7 @@ mod certificates;
 mod dns;
 mod error;
 mod gateway_limits;
+mod groups;
 mod header_rules;
 mod http3;
 mod jobs;
@@ -101,6 +102,11 @@ pub fn management(state: AppState) -> Router {
         .route("/logs", get(resources::logs))
         .route("/access-logs", get(telemetry::api::logs))
         .route("/traffic", get(telemetry::api::traffic))
+        .route("/group-stats", get(telemetry::api::group_stats))
+        .route("/groups", get(groups::list).post(groups::create))
+        .route("/groups/order", put(groups::reorder))
+        .route("/groups/assign", put(groups::assign))
+        .route("/groups/{id}", put(groups::rename).delete(groups::delete))
         .route("/telemetry", get(telemetry::api::health))
         .route("/interfaces", get(resources::interfaces))
         .route("/backup/export", post(backup::export))

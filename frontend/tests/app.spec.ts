@@ -232,3 +232,307 @@ test('Web protocol options, custom headers, failed input and detail editing', as
   await dialog.getByLabel('响应头名称 1', { exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: '../.myself/qa/web-headers-dark-mobile.png' });
 });
+
+test('service groups, bulk assignment, conflict recovery, scoped analytics and responsive management', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await login(page);
+  await page.goto('/web');
+  await page.getByRole('button', { name: '管理分组', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('新分组名称', { exact: true }).fill('基础网络');
+  await dialog.getByRole('button', { name: '创建', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('已存在');
+  await expect(dialog.getByLabel('新分组名称', { exact: true })).toHaveValue(
+    '基础网络',
+  );
+  await dialog.getByLabel('新分组名称', { exact: true }).fill('浏览器分组');
+  await dialog.getByRole('button', { name: '创建', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: '编辑分组 浏览器分组', exact: true })).toBeVisible();
+  await dialog
+    .getByRole('button', { name: '编辑分组 浏览器分组', exact: true })
+    .click();
+  await dialog.getByLabel('分组名称', { exact: true }).fill('测试服务');
+  await dialog
+    .getByRole('button', { name: '保存分组名称', exact: true })
+    .click();
+  await expect(dialog.getByRole('button', { name: '编辑分组 测试服务', exact: true })).toBeVisible();
+  await dialog
+    .getByRole('button', { name: '上移 测试服务', exact: true })
+    .focus();
+  await page.keyboard.press('Enter');
+  await expect(dialog.locator('li').nth(5)).toContainText('测试服务');
+  await page.screenshot({ animations: 'disabled', path: '../.myself/qa/groups-manager-desktop.png' });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  const groupId = await page
+    .getByLabel('筛选分组', { exact: true })
+    .locator('option')
+    .filter({ hasText: /^测试服务$/ })
+    .getAttribute('value');
+  expect(groupId).toBeTruthy();
+  const create = async (name: string, domain: string, group: string) => {
+    const result = await page.request.post('/api/v1/resources/web', {
+      headers: { 'X-OpenLucky': '1' },
+      data: {
+        name,
+        domain,
+        target: 'http://127.0.0.1:56302',
+        enabled: true,
+        group_id: group,
+      },
+    });
+    expect(result.ok()).toBe(true);
+    const body: unknown = await result.json();
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      !('id' in body) ||
+      typeof body.id !== 'string'
+    )
+      throw new Error('Missing service ID');
+    return body.id;
+  };
+  const a = await create('分组服务 A', 'group-a.example.test', groupId ?? '');
+  const b = await create('分组服务 B', 'group-b.example.test', groupId ?? '');
+  const c = await create('未归组服务', 'group-c.example.test', '');
+  for (let i = 0; i < 10; i++) {
+    const response = await page.request.get('http://127.0.0.1:58380/healthz', {
+      headers: {
+        Host: i < 2 ? 'group-a.example.test' : 'group-b.example.test',
+      },
+    });
+    expect(response.status()).toBe(200);
+  }
+  await page.reload();
+  const custom = page.getByRole('region', {
+    name: '测试服务服务组',
+    exact: true,
+  });
+  await expect(
+    custom.getByRole('link', { name: '分组服务 A', exact: true }),
+  ).toBeVisible();
+  await custom.getByLabel('选择 测试服务 全部服务', { exact: true }).check();
+  const bulk = page.getByRole('region', { name: '批量归组', exact: true });
+  await expect(bulk).toContainText('已选 2 项');
+  await bulk.getByLabel('移动到分组', { exact: true }).selectOption('group-ai');
+  await bulk.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(bulk).toHaveCount(0);
+  const ai = page.getByRole('region', { name: 'AI 服务服务组', exact: true });
+  await expect(
+    ai.getByRole('link', { name: '分组服务 A', exact: true }),
+  ).toBeVisible();
+  await ai.getByRole('button', { name: /AI 服务/ }).click();
+  await expect(
+    ai.getByRole('link', { name: '分组服务 A', exact: true }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(ai.getByRole('button', { name: /AI 服务/ })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
+  await page.getByLabel('搜索Web 服务').fill('分组服务 A');
+  await expect(
+    ai.getByRole('link', { name: '分组服务 A', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('搜索Web 服务').fill('');
+  await page.getByLabel('筛选分组', { exact: true }).selectOption('group-ai');
+  await expect(
+    ai.getByRole('link', { name: '分组服务 A', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: '未归组服务', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('region', { name: '访问统计', exact: true }),
+  ).toContainText('10', { timeout: 15000 });
+  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await expect(dialog.getByLabel('分组', { exact: true })).toHaveValue(
+    'group-ai',
+  );
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('link', { name: '访问日志', exact: true }).click();
+  await expect(page.getByLabel('日志分组', { exact: true })).toHaveValue(
+    'group-ai',
+  );
+  await expect(page.getByRole('table').locator('tbody tr')).toHaveCount(10);
+  await expect(page.getByLabel('筛选服务').locator('option')).toHaveCount(3);
+  await page.getByRole('tab', { name: '系统事件', exact: true }).click();
+  await page.getByRole('tab', { name: '访问日志', exact: true }).click();
+  await expect(page.getByLabel('日志分组', { exact: true })).toHaveValue(
+    'group-ai',
+  );
+  await page.getByLabel('筛选服务').selectOption(a);
+  await expect(page.getByRole('table').locator('tbody tr')).toHaveCount(2);
+  await page.getByLabel('日志分组', { exact: true }).selectOption('unassigned');
+  await expect(page.getByLabel('筛选服务')).toHaveValue('');
+  await expect(page.getByText('暂无匹配记录', { exact: true })).toBeVisible();
+  await page.goto('/');
+  const summary = page.getByRole('region', {
+    name: '服务分组概况',
+    exact: true,
+  });
+  await expect(
+    summary.getByRole('row').filter({ hasText: 'AI 服务' }),
+  ).toContainText('2 / 2');
+  await summary.getByRole('link', { name: 'AI 服务', exact: true }).click();
+  await page.getByLabel('选择 分组服务 A', { exact: true }).check();
+  await bulk
+    .getByLabel('移动到分组', { exact: true })
+    .selectOption('unassigned');
+  await page.route('**/api/v1/groups/assign', (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: '分组或服务已被更新，请刷新后重试' }),
+    }),
+  );
+  await bulk.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(bulk.getByRole('alert')).toContainText('已被更新');
+  await expect(
+    page.getByLabel('选择 分组服务 A', { exact: true }),
+  ).toBeChecked();
+  await bulk
+    .getByRole('button', { name: '刷新并重新选择', exact: true })
+    .click();
+  await expect(bulk).toHaveCount(0);
+  await page.unroute('**/api/v1/groups/assign');
+  await page.getByRole('link', { name: '分组服务 A', exact: true }).click();
+  await expect(
+    page
+      .getByRole('region', { name: '服务配置', exact: true })
+      .getByRole('link', { name: 'AI 服务', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '编辑', exact: true }).click();
+  await dialog.getByLabel('分组', { exact: true }).selectOption(groupId ?? '');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(
+    page
+      .getByRole('region', { name: '服务配置', exact: true })
+      .getByRole('link', { name: '测试服务', exact: true }),
+  ).toBeVisible();
+  await page.goto('/web');
+  await page.getByRole('button', { name: '深色模式', exact: true }).click();
+  await page.screenshot({
+    animations: 'disabled', path: '../.myself/qa/groups-list-dark.png',
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  for (const control of [page.getByRole('button', { name: '编辑 分组服务 A', exact: true }), page.getByRole('switch', { name: '停用 分组服务 A', exact: true })]) {
+    const bounds = await control.boundingBox();
+    expect(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 390).toBe(true);
+  }
+  await page.screenshot({
+    animations: 'disabled', path: '../.myself/qa/groups-list-mobile.png',
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: '管理分组', exact: true }).click();
+  await expect(dialog.getByRole('heading', { name: '管理分组', exact: true })).toBeVisible();
+  await page.screenshot({ animations: 'disabled', path: '../.myself/qa/groups-manager-mobile.png' });
+  await dialog
+    .getByRole('button', { name: '删除分组 测试服务', exact: true })
+    .click();
+  const deletion = page.getByRole('alertdialog');
+  await expect(deletion).toContainText('1 个服务将转为未分组');
+  await deletion.getByRole('button', { name: '删除分组', exact: true }).click();
+  await expect(deletion).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: '编辑分组 测试服务', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByLabel('筛选分组', { exact: true }).selectOption('unassigned');
+  await expect(
+    page.getByRole('link', { name: '分组服务 A', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: '未归组服务', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('分组已删除，成员已转为未分组', { exact: true })).toHaveCount(0, { timeout: 7000 });
+  await page.screenshot({
+    animations: 'disabled', path: '../.myself/qa/groups-filter-mobile.png',
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  for (const id of [a, b, c])
+    expect(
+      (
+        await page.request.delete(`/api/v1/resources/web/${id}`, {
+          headers: { 'X-OpenLucky': '1' },
+        })
+      ).ok(),
+    ).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('pending group saves stay open and keep failed names', async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto('/web');
+  await page.getByRole('button', { name: '管理分组', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('新分组名称', { exact: true }).fill('等待中的分组');
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/v1/groups', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    await gate;
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: '保存暂时不可用' }),
+    });
+  });
+  await dialog.getByRole('button', { name: '创建', exact: true }).click();
+  await expect(
+    dialog.getByRole('button', { name: '创建', exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  if (release) release();
+  await expect(dialog.getByRole('alert')).toContainText('保存暂时不可用');
+  await expect(dialog.getByLabel('新分组名称', { exact: true })).toHaveValue(
+    '等待中的分组',
+  );
+});
+
+test('group rename and refresh failures keep input and visible recovery', async ({ page }) => {
+  await login(page);
+  for (let index = 0; index < 20; index++) {
+    const response = await page.request.post('/api/v1/groups', { headers: { 'X-OpenLucky': '1' }, data: { name: `额外分组 ${index}` } });
+    expect(response.ok()).toBe(true);
+  }
+  await page.goto('/web');
+  await page.getByRole('button', { name: '管理分组', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: '编辑分组 基础网络', exact: true }).click();
+  await dialog.getByLabel('分组名称', { exact: true }).fill('保留我的新名称');
+  await page.route('**/api/v1/groups/group-network', route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: '分组版本已过期，请刷新' }) }));
+  await dialog.getByRole('button', { name: '保存分组名称', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toBeInViewport();
+  await expect(dialog.getByRole('alert')).toContainText('版本已过期');
+  await page.route('**/api/v1/groups', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '暂时无法读取分组' }) }));
+  await dialog.getByRole('button', { name: '载入最新名称', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('刷新失败', { timeout: 15000 });
+  await expect(dialog.getByLabel('分组名称', { exact: true })).toHaveValue('保留我的新名称');
+  await expect(dialog.getByRole('alert')).toBeInViewport();
+  await page.screenshot({ animations: 'disabled', path: '../.myself/qa/groups-rename-error.png' });
+  await page.unroute('**/api/v1/groups');
+  await dialog.getByRole('button', { name: '载入最新名称', exact: true }).click();
+  await expect(dialog.getByLabel('分组名称', { exact: true })).toHaveValue('基础网络');
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+});

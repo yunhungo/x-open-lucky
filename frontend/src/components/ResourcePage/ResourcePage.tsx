@@ -3,7 +3,16 @@
  * @description 管理可搜索的资源列表和受保护删除流程。
  * @author yunhungo
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { GroupSelect } from '@/components/GroupSelect/GroupSelect';
+import { GroupManager } from '@/components/GroupManager/GroupManager';
+import { WebGroupList } from '@/components/WebGroupList/WebGroupList';
+import { BulkGroupActions } from '@/components/BulkGroupActions/BulkGroupActions';
+import { TrafficPanel } from '@/components/TrafficPanel/TrafficPanel';
+import { useGroups, useGroupStats, refreshGroups } from '@/lib/groups-api';
+import { UNASSIGNED, inGroup, groupLabel } from '@/lib/groups';
+import { ResourceTable } from './ResourceTable';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, SlidersHorizontal, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -18,12 +27,16 @@ import {
   AlertDialogFooter,
   AlertDialogCancel,
 } from '@/components/ui/alert-dialog';
-import { ResourceRow } from '@/components/ResourceRow/ResourceRow';
 import { ResourceEditor } from '@/components/ResourceEditor/ResourceEditor';
 import { CertificateImport } from '@/components/CertificateImport/CertificateImport';
 import { QueryState } from '@/components/QueryState/QueryState';
 import { errorText, okSchema, request, useResources } from '@/lib/api';
-import { names, type Kind, type Resource } from '@/lib/contracts';
+import {
+  names,
+  type Kind,
+  type Resource,
+  type WebService,
+} from '@/lib/contracts';
 import './ResourcePage.scss';
 type Editor =
   { mode: 'edit'; item?: Resource } | { mode: 'import'; item: Resource };
@@ -35,6 +48,37 @@ export function ResourcePage({
   embedded?: boolean;
 }) {
   const resources = useResources(kind);
+  const groups = useGroups(kind === 'web');
+  const stats = useGroupStats(kind === 'web');
+  const [params, setParams] = useSearchParams();
+  const group = kind === 'web' ? (params.get('group') ?? '') : '';
+  const [managing, setManaging] = useState(false);
+  const [selected, setSelected] = useState<Record<string, number>>({});
+  const [assigning, setAssigning] = useState(false);
+  useEffect(() => {
+    setSelected({});
+  }, [group]);
+  const changeGroup = (value: string) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set('group', value);
+    else next.delete('group');
+    setParams(next, { replace: true });
+    setSelected({});
+  };
+  const selection = {
+    selected,
+    disabled: assigning,
+    change: (items: Resource[], checked: boolean) => {
+      setSelected((current) => {
+        const next = { ...current };
+        for (const item of items) {
+          if (checked) next[item.id] ??= item.revision;
+          else delete next[item.id];
+        }
+        return next;
+      });
+    },
+  };
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -44,6 +88,8 @@ export function ResourcePage({
     mutationFn: (id: string) =>
       request(`/resources/${kind}/${id}`, okSchema, { method: 'DELETE' }),
     onSuccess: () => {
+      if (kind === 'web') void refreshGroups(queryClient);
+      setSelected({});
       void queryClient.invalidateQueries({ queryKey: ['resources'] });
       void queryClient.invalidateQueries({ queryKey: ['overview'] });
       toast.success('已删除');
@@ -52,6 +98,8 @@ export function ResourcePage({
   });
   const filtered = resources.data?.filter(
     (item) =>
+      (kind !== 'web' ||
+        ('group_id' in item && inGroup(item.group_id, group))) &&
       [
         item.name,
         'domain' in item
@@ -69,12 +117,17 @@ export function ResourcePage({
         (filter === 'disabled' && 'enabled' in item && !item.enabled) ||
         (filter === 'enabled' && 'enabled' in item && item.enabled)),
   );
-  const labels = {
-    ddns: ['域名', '记录 / IP', '状态', '最近检查'],
-    web: ['服务 / 域名', '目标地址', '状态', '启用'],
-    certificates: ['证书 / 域名', '来源', '状态', '到期日期'],
-    credentials: ['名称 / 服务商', '存储', '状态', ''],
+  const actions = {
+    edit: (item: Resource) => setEditor({ mode: 'edit', item }),
+    upload: (item: Resource) => setEditor({ mode: 'import', item }),
+    remove: (item: Resource) => {
+      remove.reset();
+      setDeleting(item);
+    },
   };
+  const webItems = (filtered ?? []).filter(
+    (item): item is WebService => 'group_id' in item,
+  );
   return (
     <>
       {embedded ? (
@@ -90,10 +143,33 @@ export function ResourcePage({
             type='search'
             placeholder='搜索名称、域名…'
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            disabled={assigning}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelected({});
+            }}
           />
         </div>
-        <div className='flex items-center gap-3 ml-auto'>
+        <div className='resource-toolbar__actions'>
+          {kind === 'web' && (
+            <>
+              <GroupSelect
+                groups={groups.data ?? []}
+                value={group}
+                onChange={changeGroup}
+                label='筛选分组'
+                filter
+                disabled={assigning || !groups.data}
+              />
+              <Button
+                variant='outline'
+                onClick={() => setManaging(true)}
+                disabled={assigning}
+              >
+                管理分组
+              </Button>
+            </>
+          )}
           {kind !== 'credentials' && (
             <div className='flex items-center gap-2'>
               <SlidersHorizontal
@@ -104,7 +180,11 @@ export function ResourcePage({
                 aria-label='筛选状态'
                 className='filter-select'
                 value={filter}
-                onChange={(e) => setFilter(e.target.value)}
+                disabled={assigning}
+                onChange={(e) => {
+                  setFilter(e.target.value);
+                  setSelected({});
+                }}
               >
                 <option value='all'>全部状态</option>
                 {kind !== 'certificates' && (
@@ -123,55 +203,77 @@ export function ResourcePage({
           </Button>
         </div>
       </div>
-      <div className='panel overflow-hidden'>
-        {resources.isPending || resources.isError ? (
+      {kind === 'web' && (groups.isError || stats.isError) && (
+        <p role='alert' className='mb-4 text-sm text-destructive'>
+          {errorText(groups.error ?? stats.error)}{' '}
+          <button
+            onClick={() => {
+              void groups.refetch();
+              void stats.refetch();
+            }}
+          >
+            重试
+          </button>
+        </p>
+      )}
+      {kind === 'web' && Object.keys(selected).length > 0 && (
+        <BulkGroupActions
+          selected={selected}
+          groups={groups.data ?? []}
+          clear={() => setSelected({})}
+          pending={setAssigning}
+        />
+      )}
+      {group && (
+        <TrafficPanel
+          groupId={group}
+          title={`${group === UNASSIGNED ? '未分组' : groupLabel(groups.data ?? [], group)} · 访问情况`}
+        />
+      )}
+      <div
+        className={
+          kind === 'web' && filtered?.length ? '' : 'panel overflow-hidden'
+        }
+      >
+        {resources.isPending ||
+        resources.isError ||
+        (kind === 'web' && !groups.data) ? (
           <div className='p-6'>
             <QueryState
-              error={resources.error}
-              retry={() => void resources.refetch()}
+              error={resources.error ?? groups.error}
+              retry={() => {
+                void resources.refetch();
+                if (kind === 'web') void groups.refetch();
+              }}
             />
           </div>
         ) : filtered?.length ? (
-          <div className='overflow-x-auto'>
-            <table className='resource-table'>
-              <thead>
-                <tr>
-                  {labels[kind].map((label, i) => (
-                    <th key={i}>{label}</th>
-                  ))}
-                  <th className='text-right'>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((item) => (
-                  <ResourceRow
-                    key={item.id}
-                    kind={kind}
-                    item={item}
-                    edit={() => setEditor({ mode: 'edit', item })}
-                    upload={() => setEditor({ mode: 'import', item })}
-                    remove={() => {
-                      remove.reset();
-                      setDeleting(item);
-                    }}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          kind === 'web' ? (
+            <WebGroupList
+              items={webItems}
+              groups={groups.data ?? []}
+              stats={stats.data?.groups ?? []}
+              actions={actions}
+              selection={selection}
+              expanded={Boolean(query || group || filter !== 'all')}
+            />
+          ) : (
+            <ResourceTable kind={kind} items={filtered} actions={actions} />
+          )
         ) : (
           <div className='resource-empty'>
             <span>
-              {query || filter !== 'all'
+              {query || group || filter !== 'all'
                 ? '没有匹配的结果'
                 : `暂无${names[kind]}`}
             </span>
-            {query || filter !== 'all' ? (
+            {query || group || filter !== 'all' ? (
               <Button
                 variant='link'
                 onClick={() => {
                   setQuery('');
                   setFilter('all');
+                  changeGroup('');
                 }}
               >
                 清除筛选
@@ -188,6 +290,9 @@ export function ResourcePage({
           </div>
         )}
       </div>
+      <Sheet open={managing} onOpenChange={setManaging}>
+        {managing && <GroupManager />}
+      </Sheet>
       <Sheet
         open={Boolean(editor)}
         onOpenChange={(open) => {
@@ -199,6 +304,7 @@ export function ResourcePage({
             key={`${kind}-${editor.item?.id ?? 'new'}`}
             kind={kind}
             item={editor.item}
+            defaultGroupId={group === UNASSIGNED ? '' : group}
             close={() => setEditor(null)}
           />
         ) : editor?.mode === 'import' ? (

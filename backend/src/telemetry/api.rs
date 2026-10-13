@@ -1,7 +1,9 @@
 // @created 2026-10-13
 // @description 提供受认证保护的访问分页、统计及采集健康状态接口。
 // @author yunhungo
+pub use super::group_stats::group_stats;
 use super::*;
+use crate::groups::scope::{self, Scope};
 use crate::{error::ApiError, AppState};
 use axum::{
     extract::{Query, State},
@@ -12,6 +14,7 @@ use sqlx::{QueryBuilder, Row, Sqlite};
 
 #[derive(Deserialize, Default)]
 pub struct Filter {
+    group_id: Option<String>,
     #[serde(default)]
     service_id: String,
     #[serde(default)]
@@ -45,11 +48,10 @@ pub async fn logs(
     Query(filter): Query<Filter>,
 ) -> Result<Json<Value>, ApiError> {
     filter.validate()?;
+    let scope = scope::resolve(&state, &filter.service_id, filter.group_id.as_deref()).await?;
     let limit = filter.limit.unwrap_or(50);
     let mut query = QueryBuilder::<Sqlite>::new("SELECT id,entry FROM access_logs WHERE 1=1");
-    if !filter.service_id.is_empty() {
-        query.push(" AND service_id=").push_bind(filter.service_id);
-    }
+    scope.push(&mut query);
     if filter.errors {
         query.push(" AND failed=1");
     }
@@ -96,6 +98,7 @@ pub async fn logs(
 }
 #[derive(Deserialize)]
 pub struct TrafficQuery {
+    group_id: Option<String>,
     #[serde(default)]
     service_id: String,
     hours: Option<i64>,
@@ -108,9 +111,8 @@ pub async fn traffic(
     if ![24, 168, 720].contains(&hours) || query.service_id.len() > 64 {
         return Err(ApiError::bad("无效的统计范围"));
     }
-    Ok(Json(
-        state.telemetry.traffic(&query.service_id, hours).await?,
-    ))
+    let scope = scope::resolve(&state, &query.service_id, query.group_id.as_deref()).await?;
+    Ok(Json(state.telemetry.traffic_scope(&scope, hours).await?))
 }
 pub async fn health(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let telemetry = &state.telemetry;
@@ -132,17 +134,27 @@ pub async fn health(State(state): State<AppState>) -> Result<Json<Value>, ApiErr
     })))
 }
 impl Telemetry {
+    #[cfg(test)]
     pub(super) async fn traffic(&self, service_id: &str, hours: i64) -> Result<Value> {
+        let scope = if service_id.is_empty() {
+            Scope::All
+        } else {
+            Scope::Services(vec![service_id.into()])
+        };
+        self.traffic_scope(&scope, hours).await
+    }
+    async fn traffic_scope(&self, scope: &Scope, hours: i64) -> Result<Value> {
         let end = chrono::Utc::now().timestamp() / 3600 * 3600;
         let start = end - (hours - 1) * 3600;
-        let rows = sqlx::query(
-            "SELECT * FROM traffic WHERE service_id=? AND hour>=? AND hour<=? ORDER BY hour",
-        )
-        .bind(service_id)
-        .bind(start)
-        .bind(end)
-        .fetch_all(&self.pool)
-        .await?;
+        let mut query = QueryBuilder::<Sqlite>::new("SELECT hour,SUM(requests) requests,SUM(client_errors) client_errors,SUM(server_errors) server_errors,SUM(stream_errors) stream_errors,SUM(latency_ms) latency_ms FROM traffic WHERE hour>=");
+        query.push_bind(start).push(" AND hour<=").push_bind(end);
+        if matches!(scope, Scope::All) {
+            query.push(" AND service_id=''");
+        } else {
+            scope.push(&mut query);
+        }
+        query.push(" GROUP BY hour ORDER BY hour");
+        let rows = query.build().fetch_all(&self.pool).await?;
         let mut buckets: HashMap<i64, Bucket> = rows
             .into_iter()
             .map(|row| {

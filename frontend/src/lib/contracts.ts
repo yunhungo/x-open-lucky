@@ -43,6 +43,7 @@ export const ddnsSchema = z.object({
   proxied: z.boolean(),
 });
 export const webSchema = z.object({
+  group_id: z.string().default(''),
   options: webOptionsSchema.default(defaultWebOptions),
   listener: z.string().default('default'),
   ...base,
@@ -71,6 +72,7 @@ export const schemas = {
 export type Resource = z.infer<(typeof schemas)[Kind]>;
 export type Credential = z.infer<typeof credentialSchema>;
 export type Certificate = z.infer<typeof certificateSchema>;
+export type WebService = z.infer<typeof webSchema>;
 export const logSchema = z.object({
   id: z.number(),
   time: z.number(),

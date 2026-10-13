@@ -6,12 +6,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { request } from './api';
 import { trafficSchema, telemetrySchema } from './observability';
-export function useTraffic(serviceId = '', hours = 24) {
+export function useTraffic(serviceId = '', hours = 24, groupId = '') {
   return useQuery({
-    queryKey: ['traffic', serviceId, hours],
+    queryKey: ['traffic', serviceId, hours, groupId],
     queryFn: ({ signal }) =>
       request(
-        `/traffic?${new URLSearchParams({ service_id: serviceId, hours: String(hours) })}`,
+        `/traffic?${new URLSearchParams({ service_id: serviceId, ...(groupId ? { group_id: groupId } : {}), hours: String(hours) })}`,
         trafficSchema,
         { signal },
       ),

@@ -11,7 +11,9 @@ export function LogsPage() {
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') === 'events' ? 'events' : 'access';
   const select = (value: string) => {
-    setParams({ tab: value });
+    const next = new URLSearchParams(params);
+    next.set('tab', value);
+    setParams(next);
     document.getElementById(`${value}-tab`)?.focus();
   };
   return (
@@ -30,7 +32,7 @@ export function LogsPage() {
             }
           }}
           aria-controls='access-logs-panel'
-          onClick={() => setParams({ tab: 'access' })}
+          onClick={() => select('access')}
         >
           访问日志
         </button>
@@ -46,7 +48,7 @@ export function LogsPage() {
             }
           }}
           aria-controls='events-logs-panel'
-          onClick={() => setParams({ tab: 'events' })}
+          onClick={() => select('events')}
         >
           系统事件
         </button>

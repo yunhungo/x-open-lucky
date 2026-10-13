@@ -20,18 +20,25 @@ import {
   SheetFooter,
 } from '@/components/ui/sheet';
 import { errorText, idSchema, request, useResources } from '@/lib/api';
+import { refreshGroups, useGroups } from '@/lib/groups-api';
 import { names, type Kind, type Resource } from '@/lib/contracts';
-import { defaults, fields, initial, payload } from './fields';
+import { defaults, fields, initial, payload, type FormValues } from './fields';
 export function ResourceEditor({
   kind,
   item,
   close,
+  defaultGroupId = '',
 }: {
   kind: Kind;
   item?: Resource;
   close: () => void;
+  defaultGroupId?: string;
 }) {
-  const [values, setValues] = useState(() => initial(kind, item));
+  const [values, setValues] = useState<FormValues>(() => ({
+    ...initial(kind, item),
+    ...(!item && kind === 'web' ? { group_id: defaultGroupId } : {}),
+  }));
+  const groups = useGroups(kind === 'web');
   const queryClient = useQueryClient();
   const credentials = useResources('credentials');
   const certificates = useResources('certificates');
@@ -45,6 +52,7 @@ export function ResourceEditor({
         }),
       }),
     onSuccess: () => {
+      if (kind === 'web') void refreshGroups(queryClient);
       void queryClient.invalidateQueries({ queryKey: ['resources'] });
       void queryClient.invalidateQueries({ queryKey: ['overview'] });
       toast.success(item ? '已保存' : '已添加');
@@ -99,6 +107,11 @@ export function ResourceEditor({
                   value: c.id,
                   label: c.name,
                 }));
+              if (field.key === 'group_id')
+                options = groups.data?.map((g) => ({
+                  value: g.id,
+                  label: g.name,
+                }));
               return (
                 <div
                   key={field.key}
@@ -124,7 +137,11 @@ export function ResourceEditor({
                       id={id}
                       value={String(values[field.key])}
                       required={field.required}
-                      disabled={locked || mutation.isPending}
+                      disabled={
+                        locked ||
+                        mutation.isPending ||
+                        (field.key === 'group_id' && !groups.data)
+                      }
                       onChange={(e) =>
                         setValues((v) => ({
                           ...v,
@@ -137,9 +154,20 @@ export function ResourceEditor({
                     >
                       {!field.options && (
                         <option value=''>
-                          {field.required ? '请选择' : '不使用'}
+                          {field.key === 'group_id'
+                            ? '未分组'
+                            : field.required
+                              ? '请选择'
+                              : '不使用'}
                         </option>
                       )}
+                      {field.key === 'group_id' &&
+                        values.group_id &&
+                        !options?.some((o) => o.value === values.group_id) && (
+                          <option value={String(values.group_id)} disabled>
+                            分组已删除或未加载
+                          </option>
+                        )}
                       {options?.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
@@ -168,7 +196,11 @@ export function ResourceEditor({
                       autoComplete={
                         field.type === 'password' ? 'new-password' : 'off'
                       }
-                      disabled={locked || mutation.isPending}
+                      disabled={
+                        locked ||
+                        mutation.isPending ||
+                        (field.key === 'group_id' && !groups.data)
+                      }
                       onChange={(e) =>
                         setValues((v) => ({
                           ...v,
@@ -201,6 +233,14 @@ export function ResourceEditor({
           {mutation.isError && (
             <p role='alert' className='text-sm text-destructive'>
               {errorText(mutation.error)}
+            </p>
+          )}
+          {kind === 'web' && groups.isError && (
+            <p role='alert' className='text-sm text-destructive'>
+              分组加载失败{' '}
+              <button type='button' onClick={() => void groups.refetch()}>
+                重试
+              </button>
             </p>
           )}
           {credentials.isError && (

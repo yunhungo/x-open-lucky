@@ -3,7 +3,11 @@
  * @description 提供有游标分页的访问日志、错误筛选及单页导出。
  * @author yunhungo
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { GroupSelect } from '@/components/GroupSelect/GroupSelect';
+import { useGroups } from '@/lib/groups-api';
+import { inGroup } from '@/lib/groups';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,6 +18,9 @@ import { TelemetryStatus } from './TelemetryStatus';
 import './AccessLogPanel.scss';
 export function AccessLogPanel({ serviceId = '' }: { serviceId?: string }) {
   const services = useResources('web');
+  const groups = useGroups(!serviceId);
+  const [url, setUrl] = useSearchParams();
+  const group = serviceId ? '' : (url.get('group') ?? '');
   const [filter, setFilter] = useState({
     service: '',
     errors: false,
@@ -24,12 +31,18 @@ export function AccessLogPanel({ serviceId = '' }: { serviceId?: string }) {
   const [draft, setDraft] = useState('');
   const [cursors, setCursors] = useState<number[]>([]);
   const [anchor, setAnchor] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    setFilter((current) => ({ ...current, service: '' }));
+    setCursors([]);
+    setAnchor(Math.floor(Date.now() / 1000));
+  }, [group]);
   const before = cursors.at(-1);
   const params = new URLSearchParams({
     service_id: serviceId || filter.service,
     errors: String(filter.errors),
     q: filter.q,
   });
+  if (group) params.set('group_id', group);
   if (before) params.set('before', String(before));
   if (filter.status) params.set('status', filter.status);
   if (filter.hours)
@@ -86,17 +99,34 @@ export function AccessLogPanel({ serviceId = '' }: { serviceId?: string }) {
           </button>
         </form>
         {!serviceId && (
+          <GroupSelect
+            groups={groups.data ?? []}
+            value={group}
+            filter
+            label='日志分组'
+            disabled={!groups.data}
+            onChange={(value) => {
+              const next = new URLSearchParams(url);
+              if (value) next.set('group', value);
+              else next.delete('group');
+              setUrl(next, { replace: true });
+            }}
+          />
+        )}
+        {!serviceId && (
           <select
             aria-label='筛选服务'
             value={filter.service}
             onChange={(e) => update({ service: e.target.value })}
           >
             <option value=''>全部服务</option>
-            {services.data?.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+            {services.data
+              ?.filter((s) => 'group_id' in s && inGroup(s.group_id, group))
+              .map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
           </select>
         )}
         <select
@@ -157,6 +187,12 @@ export function AccessLogPanel({ serviceId = '' }: { serviceId?: string }) {
           </Button>
         </div>
       </div>
+      {groups.isError && !serviceId && (
+        <p role='alert' className='telemetry-message text-destructive'>
+          分组加载失败{' '}
+          <button onClick={() => void groups.refetch()}>重试</button>
+        </p>
+      )}
       {services.isError && !serviceId && (
         <p role='alert' className='telemetry-message text-destructive'>
           服务筛选加载失败{' '}

@@ -66,7 +66,7 @@ export function BackupPanel() {
       <div className='p-6 space-y-6'>
         <p className='text-xs text-muted-foreground leading-relaxed'>
           包含 DNS 凭据、动态域名、Web
-          服务和证书私钥。恢复会替换这些配置，保留当前管理员账户。
+          服务、分组和证书私钥。恢复会替换这些配置，保留当前管理员账户。
         </p>
         <div className='space-y-2'>
           <Label htmlFor='backup-password'>备份密码</Label>
@@ -122,7 +122,8 @@ export function BackupPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle>替换当前配置？</AlertDialogTitle>
             <AlertDialogDescription>
-              建议先导出当前配置。恢复后立即使用备份中的 DNS、Web 和证书设置。
+              建议先导出当前配置。恢复后立即使用备份中的
+              DNS、Web、分组和证书设置。
             </AlertDialogDescription>
           </AlertDialogHeader>
           {restore.isError && (

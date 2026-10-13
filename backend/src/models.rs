@@ -40,6 +40,8 @@ pub struct Ddns {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WebRule {
     #[serde(default)]
+    pub group_id: String,
+    #[serde(default)]
     pub options: crate::web_options::WebOptions,
     #[serde(default = "default_listener")]
     pub listener: String,
@@ -175,6 +177,9 @@ pub fn validate(kind: &str, mut value: Value) -> Result<Value> {
         }
         "web" => {
             let item: WebRule = serde_json::from_value(value)?;
+            if item.group_id.len() > 64 {
+                bail!("分组标识无效");
+            }
             if item.listener.is_empty()
                 || item.listener.len() > 64
                 || !item

@@ -1,0 +1,27 @@
+/**
+ * @created 2026-10-13
+ * @description 呈现紧凑的批量归组操作栏和可恢复错误。
+ * @author yunhungo
+ */
+.bulk-groups {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 12px;
+  select {
+    width: 180px;
+  }
+  p {
+    width: 100%;
+    color: var(--destructive);
+  }
+  p button {
+    text-decoration: underline;
+  }
+}

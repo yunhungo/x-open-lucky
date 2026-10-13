@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { StatusBadge } from '@/components/StatusBadge/StatusBadge';
+import { refreshGroups } from '@/lib/groups-api';
 import { errorText, idSchema, request } from '@/lib/api';
 import {
   dateOnly,
@@ -25,16 +26,23 @@ export function ResourceRow({
   edit,
   remove,
   upload,
+  selection,
 }: {
   kind: Kind;
   item: Resource;
   edit: () => void;
   remove: () => void;
   upload: () => void;
+  selection?: {
+    checked: boolean;
+    disabled?: boolean;
+    change: (checked: boolean) => void;
+  };
 }) {
   const queryClient = useQueryClient();
   const running = item.status.state === 'running';
   const refresh = () => {
+    if (kind === 'web') void refreshGroups(queryClient);
     void queryClient.invalidateQueries({ queryKey: ['resources'] });
     void queryClient.invalidateQueries({ queryKey: ['overview'] });
   };
@@ -65,7 +73,18 @@ export function ResourceRow({
   });
   return (
     <tr>
-      <td>
+      {selection && (
+        <td className='resource-table__select'>
+          <input
+            type='checkbox'
+            aria-label={`选择 ${item.name}`}
+            checked={selection.checked}
+            disabled={selection.disabled}
+            onChange={(e) => selection.change(e.target.checked)}
+          />
+        </td>
+      )}
+      <td className='resource-row__name'>
         <div className='font-medium text-[13px]'>
           {kind === 'web' ? (
             <Link
@@ -87,7 +106,7 @@ export function ResourceRow({
               : providers[item.provider]}
         </div>
       </td>
-      <td>
+      <td className='resource-row__target'>
         {'record_type' in item ? (
           <>
             <span className='record-type'>{item.record_type}</span>
@@ -123,7 +142,7 @@ export function ResourceRow({
           <p className='text-xs text-muted-foreground'>凭据已加密</p>
         )}
       </td>
-      <td>
+      <td className='resource-row__status'>
         <StatusBadge resource={item} />
         {item.status.message && item.status.state === 'error' && (
           <p className='mt-2 max-w-56 text-[11px] text-destructive break-words'>
@@ -131,7 +150,7 @@ export function ResourceRow({
           </p>
         )}
       </td>
-      <td className='text-[11px] text-muted-foreground whitespace-nowrap'>
+      <td className='resource-row__enabled text-[11px] text-muted-foreground whitespace-nowrap'>
         {'domains' in item ? (
           <>
             <p>{dateOnly(item.status.expires_at)}</p>
@@ -147,18 +166,21 @@ export function ResourceRow({
           </>
         ) : 'target' in item ? (
           'enabled' in item ? (
-            <Switch
-              aria-label={`${item.enabled ? '停用' : '启用'} ${item.name}`}
-              checked={item.enabled}
-              disabled={toggle.isPending || running}
-              onCheckedChange={(enabled) => toggle.mutate(enabled)}
-            />
+            <>
+              <span className='resource-row__enabled-label'>启用</span>
+              <Switch
+                aria-label={`${item.enabled ? '停用' : '启用'} ${item.name}`}
+                checked={item.enabled}
+                disabled={toggle.isPending || running}
+                onCheckedChange={(enabled) => toggle.mutate(enabled)}
+              />
+            </>
           ) : null
         ) : (
           '—'
         )}
       </td>
-      <td>
+      <td className='resource-row__actions'>
         <div className='flex items-center justify-end gap-1'>
           {'enabled' in item && kind === 'ddns' && (
             <Switch

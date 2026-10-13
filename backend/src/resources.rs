@@ -28,7 +28,7 @@ pub async fn list(
     valid_kind(&kind)?;
     Ok(Json(json!(checked_list(&state, &kind).await?)))
 }
-async fn checked_list(state: &AppState, kind: &str) -> anyhow::Result<Vec<Value>> {
+pub(crate) async fn checked_list(state: &AppState, kind: &str) -> anyhow::Result<Vec<Value>> {
     let mut items = state.store.list(kind).await?;
     if kind == "web" {
         let certificates = state
@@ -146,6 +146,11 @@ async fn save(
     }
     if kind == "web" {
         let listener = value["listener"].as_str().unwrap_or("default");
+        crate::groups::require(
+            &state.store.pool,
+            value["group_id"].as_str().unwrap_or_default(),
+        )
+        .await?;
         if listener != "default"
             && !state
                 .config

@@ -11,6 +11,7 @@ cargo build --locked --examples
 cargo build --locked
 (cd frontend && npm ci && npm run build)
 python3 backend/tests/smoke.py
+python3 backend/tests/groups.py
 python3 backend/tests/web_protocols.py
 python3 backend/tests/shutdown.py
 python3 backend/tests/deployment.py

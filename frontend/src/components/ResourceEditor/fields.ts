@@ -43,6 +43,7 @@ export const defaults: Record<Kind, FormValues> = {
     proxied: false,
   },
   web: {
+    group_id: '',
     ...optionValues(defaultWebOptions),
     listener: 'default',
     name: '',
@@ -168,6 +169,7 @@ export const fields: Record<Kind, Field[]> = {
   ],
   web: [
     name,
+    { key: 'group_id', label: '分组', type: 'select' },
     {
       key: 'listener',
       label: '监听入口',
